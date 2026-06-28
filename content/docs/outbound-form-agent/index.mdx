@@ -3,43 +3,82 @@ title: Outbound Form Agent
 description: Twenty CRM SSOT → フォーム自動送信エージェント
 ---
 
-## 概要
+Outbound Form Agent は、Twenty CRM から「送信待ち」企業を取得し、Playwright + DeepSeek で各社の Web フォームを自動解析・送信する完全自動化エージェントです。結果は Twenty CRM に自動書き戻しされます。
 
-**Outbound Form Agent** は、Twenty CRM から「送信待ち」企業を取得し、
-Playwright + DeepSeek で各社の Web フォームを自動解析・送信するエージェントです。
-結果は Twenty CRM に自動書き戻しされます。
+## 何ができるのか
 
-### 主な特徴
+Twenty CRM に登録された企業に対し、**人間が一切手を触れずに**以下の一連の作業を自動実行します。
 
-- **CLI 完結** — インストールから実行まで全てターミナルで完結
-- **並列処理** — 最大 8 並列で高速処理（平均 20s/社）
-- **エラー耐性** — リトライ機構、タイムアウト、CAPTCHA 検出完備
-- **日本語対応** — Twenty CRM 日本語ステータス完全対応
-- **AGENTS.md 準拠** — 空 catch ゼロ、500 行制約以下
+1. 企業の Web サイトにアクセスし、問い合わせフォームを自動発見
+2. フォームの種類（お問い合わせ・資料請求・デモ申込等）を解析
+3. DeepSeek AI が企業情報に基づいた適切な問い合わせ文を生成
+4. フォームを自動送信
+5. 結果を Twenty CRM に記録（成功・失敗・ブロック）
 
-### クイックスタート
+## なぜ必要なのか
+
+数百〜数千社の企業リストがあっても、1 社ずつ手動でフォームを探して送信するのは現実的ではありません。Outbound Form Agent は、この「**リード → 接点**」のギャップを埋めるツールです。
+
+## 主な特徴
+
+| 特徴 | 説明 |
+|------|------|
+| **CLI 完結** | インストールから実行まで全てターミナルで完結。GUI 不要 |
+| **並列処理** | 最大 8 並列で高速処理（平均 20 秒/社） |
+| **エラー耐性** | リトライ機構、タイムアウト処理、CAPTCHA 検出を完備 |
+| **日本語対応** | Twenty CRM の日本語ステータス値に完全対応 |
+| **AGENTS.md 準拠** | 空 catch ゼロ、1 ファイル 500 行制約以下 |
+| **ゼロクリック運用** | cron に登録すれば完全自動で定期実行 |
+
+## 処理できるフォームの種類
+
+- お問い合わせフォーム
+- 資料請求フォーム
+- デモ申込フォーム
+- 一般的な入力フォーム（名前・メール・メッセージ）
+
+## 処理できないもの（自動スキップ）
+
+- CAPTCHA（reCAPTCHA / hCaptcha / Cloudflare Turnstile）があるフォーム
+- 画像認証が必要なフォーム
+- JavaScript による動的生成が極端に複雑なフォーム
+- ファイル添付が必須のフォーム
+
+これらの場合は Twenty CRM のステータスが「ブロック / 未対応」になります。
+
+## クイックスタート
 
 ```bash
+# 5 分で使い始められます
 git clone https://github.com/Gracecom1/outbound-form-agent.git
 cd outbound-form-agent
 npm install
 cp .env.example .env  # API キーを設定
 npm run build
-node dist/index.js --single  # 単体テスト
+node dist/index.js --single  # まずは 1 社テスト
 ```
 
-### パイプライン
+> 詳細な手順・トラブルシューティングは [セットアップ](/docs/outbound-form-agent/setup) を参照。
+
+## パイプラインの流れ
 
 ```
-Twenty API (企業取得)
+Twenty CRM（企業取得: 送信待ち / 未対応）
     ↓
-Orchestrator (並列制御)
+Orchestrator（最大 8 並列のジョブキュー管理）
     ↓  ↓  ↓
-Form Agent 各社:
-  1. Playwright stealth 起動
-  2. フォーム解析 (構造化 / iframe / ヒューリスティック)
-  3. CAPTCHA 検出 (7 種類)
-  4. DeepSeek フォーム解析 + 文面生成
-  5. フォーム送信
-  6. Twenty ステータス更新
+各 Form Agent ジョブ:
+  1. Playwright stealth ブラウザ起動（bot 検出回避）
+  2. フォーム構造解析（DOM / iframe / ヒューリスティック）
+  3. CAPTCHA 検出（7 種類）
+  4. DeepSeek 解析（フォーム内容の理解と回答生成）
+  5. フォーム送信（フィールド入力 + submit）
+  6. Twenty CRM ステータス書き戻し（成功/失敗/ブロック）
 ```
+
+## 関連ドキュメント
+
+- [セットアップ](/docs/outbound-form-agent/setup) — 5 分で始める完全ガイド
+- [アーキテクチャ](/docs/outbound-form-agent/architecture) — 内部設計の詳細
+- [CLI リファレンス](/docs/outbound-form-agent/api) — 全コマンド・全オプション
+- [Twenty CRM 連携](/docs/twenty-crm) — CRM 側の設定と連携手順

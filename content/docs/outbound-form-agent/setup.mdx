@@ -1,16 +1,44 @@
----
-title: セットアップ
-description: Outbound Form Agent の環境構築手順
----
+# 環境セットアップ — Outbound Form Agent
 
-## Node.js 環境
+> macOS (Apple Silicon) ワンショットセットアップ
+
+## 1. 前提
 
 ```bash
-# Node.js 22+ 推奨
-node --version
+# Node.js 22+ が推奨（Playwright 対応）
+node --version  # → v22.x 以上
 ```
 
-## リポジトリのクローン
+## 2. Docker インストール
+
+### 選択肢 A: Docker Desktop（GUI）
+
+1. https://www.docker.com/products/docker-desktop/ から Apple Silicon 版をダウンロード
+2. `.dmg` を開いてインストール
+3. Docker Desktop を起動
+
+### 選択肢 B: Colima + Docker CLI（Homebrew 経由・CLI 完結）
+
+```bash
+# Homebrew インストール
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Colima + Docker CLI
+brew install docker colima
+colima start --cpu 4 --memory 4
+
+# 確認
+docker info
+```
+
+### 選択肢 C: OrbStack（軽量）
+
+```bash
+brew install orbstack
+# OrbStack.app を起動 → 自動で Docker CLI が使える
+```
+
+## 3. リポジトリセットアップ
 
 ```bash
 git clone https://github.com/Gracecom1/outbound-form-agent.git
@@ -18,52 +46,54 @@ cd outbound-form-agent
 npm install
 ```
 
-## 環境変数
+## 4. 環境変数
 
-`.env` ファイルを作成：
+`.env` ファイルを作成:
 
 ```bash
-# .env ファイルに設定
 TWENTY_BASE_URL=https://twenty.paradigmjp.com
 TWENTY_API_KEY=your_jwt_token
-DEEPSEEK_API_KEY=sk-your_key
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_API_KEY=sk-...  DEEPSEEK_MODEL=deepseek-chat
 LOG_LEVEL=info
 ```
 
-## ビルド
+## 5. 動作確認
 
 ```bash
+# ビルド
 npm run build
-```
 
-## 動作確認
-
-```bash
-# ドライラン（送信なし）
+# ドライラン（送信なし、検出のみ）
 node dist/index.js --dry-run
 
-# 単体テスト（1社のみ）
+# 単一テスト（1社のみ本番送信）
 node dist/index.js --single
-
-# 全件処理
-node dist/index.js
 ```
 
-## Docker セットアップ
-
-### Homebrew + Colima（Apple Silicon）
+## 6. デプロイ
 
 ```bash
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-brew install docker colima
-colima start --cpu 4 --memory 4
+# ワンコマンド（Docker / Node.js 自動判定）
+bash deploy.sh
+
+# Docker cron モード（30分間隔自動実行）
+bash deploy.sh --cron
 ```
 
-### ワンコマンドデプロイ
+## 7. Coolify / Hetzner デプロイ
 
-```bash
-bash deploy.sh           # 本番実行
-bash deploy.sh --single  # 単体テスト
-bash deploy.sh --cron    # 30分間隔 cron
-```
+1. Coolify → New Service → Docker Compose
+2. `docker-compose.yml` を指定
+3. Environment Variables に `.env` の全内容を設定
+4. Deploy
+
+---
+
+## トラブルシューティング
+
+| 問題 | 解決 |
+|------|------|
+| `playwright: command not found` | `npx playwright install chromium` |
+| `Docker daemon not running` | Docker Desktop / Colima を起動 |
+| `TWENTY_API_KEY not set` | `.env` がカレントディレクトリにあるか確認 |
+| `deepseek API error` | `DEEPSEEK_API_KEY` を確認、DeepSeek コンソールで残高確認 |
