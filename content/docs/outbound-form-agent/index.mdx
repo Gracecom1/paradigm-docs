@@ -1,0 +1,45 @@
+---
+title: Outbound Form Agent
+description: Twenty CRM SSOT → フォーム自動送信エージェント
+---
+
+## 概要
+
+**Outbound Form Agent** は、Twenty CRM から「送信待ち」企業を取得し、
+Playwright + DeepSeek で各社の Web フォームを自動解析・送信するエージェントです。
+結果は Twenty CRM に自動書き戻しされます。
+
+### 主な特徴
+
+- **CLI 完結** — インストールから実行まで全てターミナルで完結
+- **並列処理** — 最大 8 並列で高速処理（平均 20s/社）
+- **エラー耐性** — リトライ機構、タイムアウト、CAPTCHA 検出完備
+- **日本語対応** — Twenty CRM 日本語ステータス完全対応
+- **AGENTS.md 準拠** — 空 catch ゼロ、500 行制約以下
+
+### クイックスタート
+
+```bash
+git clone https://github.com/Gracecom1/outbound-form-agent.git
+cd outbound-form-agent
+npm install
+cp .env.example .env  # API キーを設定
+npm run build
+node dist/index.js --single  # 単体テスト
+```
+
+### パイプライン
+
+```
+Twenty API (企業取得)
+    ↓
+Orchestrator (並列制御)
+    ↓  ↓  ↓
+Form Agent 各社:
+  1. Playwright stealth 起動
+  2. フォーム解析 (構造化 / iframe / ヒューリスティック)
+  3. CAPTCHA 検出 (7 種類)
+  4. DeepSeek フォーム解析 + 文面生成
+  5. フォーム送信
+  6. Twenty ステータス更新
+```

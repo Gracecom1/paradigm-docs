@@ -1,0 +1,55 @@
+---
+title: アーキテクチャ
+description: Outbound Form Agent のシステムアーキテクチャ
+---
+
+## ファイル構成
+
+```
+src/
+├── index.ts             # CLI エントリーポイント
+├── orchestrator.ts      # パイプライン統合（並列処理制御）
+├── twenty-client.ts     # Twenty REST API クライアント
+├── form-agent.ts        # フォーム送信メインパイプライン (484行)
+├── form-selector.ts     # フォームフィールド検出・解析 (459行)
+├── form-submitter.ts    # フィールド入力・送信
+├── deepseek.ts          # DeepSeek API クライアント（リトライ3回）
+├── message-templates.ts # 業種別・国別メッセージテンプレート
+├── dummy-data.ts        # ダミーフォームデータ生成
+├── captcha.ts           # CAPTCHA 検出（7種類）
+├── generate-demo.ts     # Astro デモサイトテンプレート生成
+├── lead-collector.ts    # リード収集 (484行)
+├── lead-importer.ts     # リードインポート
+├── company-qualifier.ts # 企業審査
+├── config.ts            # 環境変数・設定
+├── logger.ts            # 構造化ログ
+├── utils.ts             # ユーティリティ
+└── types.ts             # 型定義
+```
+
+## フォーム検出：3層アプローチ
+
+| 層 | 手法 | 説明 |
+|---|------|------|
+| 1 | **構造化** | `form` 要素内の `input/select/textarea` を直接探索 |
+| 2 | **iframe** | クロスオリジン iframe 内のフォーム要素を探索 |
+| 3 | **ヒューリスティック** | 構造化検出が0件でも `input` 要素が存在すれば全要素を抽出 |
+
+## CAPTCHA 検出カバレッジ
+
+| 種類 | 検出 | 対処 |
+|------|------|------|
+| reCAPTCHA v2 | ✅ | スキップ → 手動確認 |
+| reCAPTCHA v3 | ✅ | 検出のみ（不可視） |
+| hCaptcha | ✅ | スキップ → 手動確認 |
+| Cloudflare Turnstile | ✅ | スキップ → 手動確認 |
+| Cloudflare 5秒盾 | ✅ | 検出 → 待機リトライ |
+| テキスト CAPTCHA | ✅ | 検出 → スキップ |
+
+## Twenty CRM ステータス
+
+| ステータス | 意味 |
+|-----------|------|
+| `送信待ち / 未対応` | フォーム送信待機中 |
+| `送信済み / 未対応` | フォーム送信成功 |
+| `手動確認 / 未対応` | 自動送信失敗 → 人手確認待ち |

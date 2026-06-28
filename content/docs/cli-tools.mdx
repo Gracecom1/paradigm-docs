@@ -1,0 +1,39 @@
+---
+title: CLI ツール群
+description: CLI 完結の完全自動化パイプライン
+---
+
+## ツール一覧
+
+| ツール | 説明 | リポジトリ |
+|--------|------|-----------|
+| `outbound-form-agent` | フォーム自動送信 | [GitHub](https://github.com/Gracecom1/outbound-form-agent) |
+| `paradigm-docs` | ドキュメントサイト | [GitHub](https://github.com/Gracecom1/paradigm-docs) |
+
+## 共通 CLI パターン
+
+### 単体テスト
+
+```bash
+node dist/index.js --single
+```
+
+### ドライラン
+
+```bash
+node dist/index.js --dry-run
+```
+
+### Docker デプロイ
+
+```bash
+bash deploy.sh
+```
+
+## 自動化の原則
+
+1. **CLI 完結** — すべての操作はターミナル上で完結
+2. **日本語最適化** — エラーメッセージ・ステータス値は日本語
+3. **エラー耐性** — リトライ・タイムアウト・グレースフルデグラデーション
+4. **監視可能** — 構造化ログ・進捗表示・サマリレポート
+5. **AGENTS.md 準拠** — コーディング規約を厳格に遵守

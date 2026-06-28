@@ -1,0 +1,52 @@
+---
+title: CLI リファレンス
+description: Outbound Form Agent の全 CLI オプション
+---
+
+## 基本コマンド
+
+```bash
+node dist/index.js [options]
+```
+
+## オプション一覧
+
+| オプション | 説明 | 例 |
+|-----------|------|-----|
+| `--single` | 1社のみ処理 | `--single` |
+| `--dry-run` | 送信なし・検出のみ | `--dry-run` |
+| `--max <n>` | 最大 n 社処理 | `--max 5` |
+| `--concurrency <n>` | 並列数（デフォルト8） | `--concurrency 4` |
+| `--company <name>` | 特定企業のみ | `--company "Joburg"` |
+| `--timeout <ms>` | フォーム操作タイムアウト (ms) | `--timeout 90000` |
+
+## 実行例
+
+```bash
+# 全件バッチ
+node dist/index.js
+
+# 開発・テスト
+node dist/index.js --single           # 1社テスト
+node dist/index.js --dry-run          # 検出のみ
+node dist/index.js --max 3            # 3社まで
+
+# パフォーマンス調整
+node dist/index.js --concurrency 4    # 並列4
+
+# 特定企業デバッグ
+node dist/index.js --company "Ocaso"  # 1社指定
+```
+
+## Docker
+
+```bash
+docker run --rm --env-file .env outbound-form-agent --single
+```
+
+## deploy.sh
+
+```bash
+bash deploy.sh           # Docker/Node.js 自動判定 → 本番実行
+bash deploy.sh --cron    # cron モード起動（Docker 要）
+```

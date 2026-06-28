@@ -1,0 +1,52 @@
+---
+title: Twenty CRM 連携
+description: セルフホスト Twenty CRM との API 連携
+---
+
+## セットアップ
+
+Twenty CRM は `https://twenty.paradigmjp.com` にセルフホストされています。
+
+### 環境変数
+
+```bash
+# .env ファイルに必要な変数
+TWENTY_BASE_URL=https://twenty.paradigmjp.com
+TWENTY_API_KEY=xxx-twenty-jwt
+```
+
+### 企業一覧取得
+
+```http
+GET /rest/companies?limit=200&order_by=createdAt[DescNullsLast]
+Authorization: Bearer ${token}
+```
+
+### 企業ステータス更新
+
+```json
+PATCH /rest/companies/:id
+Content-Type: application/json
+
+{ "paradigmSalesStatus": "送信済み / 未対応" }
+```
+
+## カスタムフィールド
+
+| フィールド | 型 | 内容 |
+|-----------|-----|------|
+| `paradigmSalesStatus` | `TEXT` | 営業ステータス |
+| `paradigmFormUrl` | `LINK` | フォーム URL |
+| `paradigmDemoUrl` | `LINK` | デモサイト URL |
+| `paradigmLastError` | `TEXT` | 最終エラー |
+| `paradigmCountryName` | `TEXT` | 国名 |
+| `paradigmIndustryName` | `TEXT` | 業種 |
+
+## 日本語ステータス値
+
+| 値 | 意味 |
+|----|------|
+| `送信待ち / 未対応` | フォーム送信待機中 |
+| `送信済み / 未対応` | フォーム送信成功 |
+| `手動確認 / 未対応` | 自動送信失敗 |
+| `ブロック / 未対応` | CAPTCHA または Cloudflare でブロック |

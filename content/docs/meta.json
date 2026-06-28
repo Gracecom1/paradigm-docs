@@ -1,0 +1,18 @@
+{
+  "pages": ["index"],
+  "title": "Paradigm Docs",
+  "items": {
+    "outbound-form-agent": {
+      "title": "Outbound Form Agent",
+      "pages": ["index", "architecture", "setup", "api"]
+    },
+    "twenty-crm": {
+      "type": "page",
+      "title": "Twenty CRM"
+    },
+    "cli-tools": {
+      "type": "page",
+      "title": "CLI Tools"
+    }
+  }
+}
