@@ -1,45 +1,120 @@
 ---
 title: Outbound Form Agent
-description: Twenty CRM SSOT → フォーム自動送信エージェント
+description: Twenty CRM 企業リストからフォームを自動発見・自動送信する CLI エージェント — 実務運用ガイド
 ---
 
-## 概要
+## これは何か
 
-**Outbound Form Agent** は、Twenty CRM から「送信待ち」企業を取得し、
-Playwright + DeepSeek で各社の Web フォームを自動解析・送信するエージェントです。
-結果は Twenty CRM に自動書き戻しされます。
+Outbound Form Agent は、あなたの Twenty CRM に登録されている全企業の Web サイトを巡回し、**問い合わせフォームを自動で見つけて、自動で送信する** ツールです。
 
-### 主な特徴
+たとえば、CRM に 500 社のリードが入っているとします。1 社ずつブラウザでサイトを開き、フォームを探し、会社名やメッセージを入力して送信する——これを 500 回繰り返すのは非現実的です。Outbound Form Agent は、この作業を**完全自動**で実行します。
 
-- **CLI 完結** — インストールから実行まで全てターミナルで完結
-- **並列処理** — 最大 8 並列で高速処理（平均 20s/社）
-- **エラー耐性** — リトライ機構、タイムアウト、CAPTCHA 検出完備
-- **日本語対応** — Twenty CRM 日本語ステータス完全対応
-- **AGENTS.md 準拠** — 空 catch ゼロ、500 行制約以下
+## 何ができるのか
 
-### クイックスタート
+| 処理 | 自動 or 手動 |
+|------|------------|
+| 企業の Web サイトにアクセス | 🤖 自動 |
+| お問い合わせフォームを自動発見 | 🤖 自動 |
+| フォームの種類を解析（お問い合わせ・資料請求・デモ） | 🤖 自動 |
+| DeepSeek AI が企業情報に基づいた問い合わせ文を生成 | 🤖 自動 |
+| フォームの全フィールドに自動入力して送信 | 🤖 自動 |
+| 結果を Twenty CRM に自動記録（成功・失敗・ブロック） | 🤖 自動 |
+| エラーや CAPTCHA はスキップして人間に通知 | 🤖 自動 |
+
+## なぜ必要なのか
+
+- **時間**: 1 社あたり 3〜5 分かかる手動作業が、20 秒/社になる
+- **漏れ**: 手動だと途中で疲れて抜け漏れが発生。自動化で全件処理
+- **一貫性**: 毎回同じ品質の問い合わせ文を生成
+- **記録**: 結果が Twenty CRM に自動記録されるので追跡可能
+
+## 処理の流れ（パイプライン）
+
+```
+あなたの Twenty CRM
+    │  「送信待ち / 未対応」の企業を全件取得
+    ↓
+Orchestrator（司令塔）
+    │  最大 8 社を同時処理
+    ├──────┬──────┬───
+    ↓      ↓      ↓
+  企業A    企業B    企業C...（各社並列で処理）
+
+各社の処理:
+  1. Playwright で stealth ブラウザ起動（bot 検出回避）
+  2. フォームを 3 段階で探索（form → iframe → 全 input）
+  3. CAPTCHA があれば検出 → スキップ
+  4. DeepSeek API に「どんな内容を書けばいいか」を質問
+  5. フォームに自動入力して送信
+  6. 結果を Twenty CRM に書き戻し（成功/失敗/ブロック）
+```
+
+## 主な特徴
+
+| 特徴 | 説明 |
+|------|------|
+| **CLI 完結** | GUI 不要。ターミナルだけで全操作が完結 |
+| **並列 8 社同時** | 1 社 20 秒 → 500 社でも約 20 分で完了 |
+| **エラーに強い** | 失敗したら最大 3 回再試行、それでも駄目なら安全にスキップ |
+| **CAPTCHA 検出** | reCAPTCHA/hCaptcha/Cloudflare 等 7 種を検出し自動スキップ |
+| **日本語対応** | Twenty CRM の日本語ステータス値に完全対応 |
+| **ゼロクリック** | cron 設定で毎日完全自動実行 |
+
+## 5 分で始める
 
 ```bash
+# 1. コードを取得
 git clone https://github.com/Gracecom1/outbound-form-agent.git
 cd outbound-form-agent
+
+# 2. 依存パッケージをインストール
 npm install
-cp .env.example .env  # API キーを設定
+
+# 3. API キーを設定
+cp .env.example .env
+# → .env を開いて TWENTY_API_KEY と DEEPSEEK_API_KEY を入力
+
+# 4. ビルド
 npm run build
-node dist/index.js --single  # 単体テスト
+
+# 5. まずはドライラン（送信されないので安全）
+node dist/index.js --dry-run
+
+# 6. 1 社だけテスト送信
+node dist/index.js --single
+
+# 7. Twenty CRM で結果確認 → OK なら本番実行
+node dist/index.js
 ```
 
-### パイプライン
+## 毎日の運用
 
+```bash
+# 最新コードを取得
+cd ~/outbound-form-agent
+git pull
+
+# 依存関係が更新されていないか確認
+npm install && npm run build
+
+# 実行
+node dist/index.js
+
+# → Twenty CRM で結果確認: https://twenty.paradigmjp.com
 ```
-Twenty API (企業取得)
-    ↓
-Orchestrator (並列制御)
-    ↓  ↓  ↓
-Form Agent 各社:
-  1. Playwright stealth 起動
-  2. フォーム解析 (構造化 / iframe / ヒューリスティック)
-  3. CAPTCHA 検出 (7 種類)
-  4. DeepSeek フォーム解析 + 文面生成
-  5. フォーム送信
-  6. Twenty ステータス更新
-```
+
+## Tweny CRM ステータスの見方
+
+| status | 意味 | あなたのアクション |
+|--------|------|------------------|
+| `送信待ち / 未対応` | Agent の処理待ち | 何もしなくて OK（Agent が自動処理） |
+| `送信済み / 未対応` | フォーム送信成功 | 企業からの返信を待つ |
+| `手動確認 / 未対応` | 自動送信失敗 | エラー内容を見て手動でフォーム送信 |
+| `ブロック / 未対応` | CAPTCHA 等でブロック | メール等他の手段で連絡を検討 |
+
+## 次のステップ
+
+- [セットアップ完全ガイド](/docs/outbound-form-agent/setup) — 前提条件・手順・トラブル対応
+- [CLI リファレンス](/docs/outbound-form-agent/api) — 全コマンド・Git 運用・cron 設定
+- [アーキテクチャ](/docs/outbound-form-agent/architecture) — 内部設計とデータフロー
+- [Twenty CRM 連携](/docs/twenty-crm) — CRM の API 操作と日次チェック
