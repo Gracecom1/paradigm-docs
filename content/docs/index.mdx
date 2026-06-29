@@ -1,15 +1,137 @@
 ---
 title: Paradigm Docs
-description: 全プロジェクトの統合ドキュメント
+description: 全プロジェクト統合ドキュメント — 初心者向け実務運用ガイド
 ---
 
-## Paradigm プロジェクト群
+Paradigm プロジェクト群の統合ドキュメントへようこそ。
 
-AI エージェントによる完全自動化を目指すツール群のドキュメントです。
-各プロジェクトは CLI 完結・日本語最適化・APM 統合を原則としています。
+このサイトでは、AI による完全自動化を目指す全ツールの**セットアップ手順・日次運用方法・トラブル対応**を、
+プログラミング未経験者でも読めば実務で使えるように詳しく解説しています。
 
-### プロジェクト
+---
 
-- [Outbound Form Agent](/docs/outbound-form-agent) — Twenty CRM → フォーム自動送信
-- [Twenty CRM](/docs/twenty-crm) — セルフホスト CRM 連携
-- [CLI ツール群](/docs/cli-tools) — 完全自動化パイプライン
+## クイックナビ
+
+| やりたいこと | 読むページ |
+|-------------|-----------|
+| 🚀 Outbound Form Agent を初めて使う | [セットアップ](/docs/outbound-form-agent/setup) |
+| 📋 全 CLI コマンドを知りたい | [CLI リファレンス](/docs/outbound-form-agent/api) |
+| 🏗️ 内部設計を理解したい | [アーキテクチャ](/docs/outbound-form-agent/architecture) |
+| 🔗 Twenty CRM と連携したい | [Twenty CRM 連携](/docs/twenty-crm) |
+| 🛠️ 全ツールの共通操作を知りたい | [CLI ツール群](/docs/cli-tools) |
+
+---
+
+## 全プロジェクトの役割
+
+```
+┌─────────────────────────────────────────────┐
+│                Twenty CRM                     │
+│  企業データの一元管理（SSOT）                    │
+│  https://twenty.paradigmjp.com               │
+└──────────────┬──────────────────────────────┘
+               │ REST API（データの読み書き）
+               ▼
+┌─────────────────────────────────────────────┐
+│          Outbound Form Agent                  │
+│  企業 Web サイトのフォームを自動解析・送信       │
+│  CLI 完結 ・ 最大 8 並列 ・ 完全自動            │
+└─────────────────────────────────────────────┘
+               │
+               ▼
+┌─────────────────────────────────────────────┐
+│           Paradigm Docs（このサイト）          │
+│  全プロジェクトの統合ドキュメント                │
+│  https://docs.paradigmjp.com                  │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 動作環境
+
+| 項目 | 要件 |
+|------|------|
+| OS | macOS / Linux（Ubuntu 22.04+） |
+| Node.js | 22.x 以上 |
+| npm | 10.x 以上 |
+| Git | 任意の最新版 |
+| Docker | オプション（本番運用で推奨） |
+| インターネット | 必須（API 通信・フォームアクセス） |
+
+---
+
+## 5 分で始める
+
+```bash
+# 1. Outbound Form Agent を入手
+git clone https://github.com/Gracecom1/outbound-form-agent.git
+cd outbound-form-agent
+
+# 2. セットアップ
+npm install
+cp .env.example .env
+# → .env に Twenty CRM の JWT と DeepSeek API キーを入力
+
+# 3. ビルド
+npm run build
+
+# 4. ドライランで動作確認（送信なし）
+node dist/index.js --dry-run
+
+# 5. 1 社テスト送信
+node dist/index.js --single
+```
+
+> 詳しい手順は [セットアップガイド](/docs/outbound-form-agent/setup) を参照。
+
+---
+
+## 日次運用の流れ
+
+毎日やることはこれだけです:
+
+```bash
+# 1. コードを最新に
+cd ~/outbound-form-agent && git pull && npm install && npm run build
+
+# 2. 実行
+node dist/index.js
+
+# 3. Twenty CRM で結果を確認 → https://twenty.paradigmjp.com
+```
+
+> cron で完全自動化する方法は [CLI ツール群](/docs/cli-tools) を参照。
+
+---
+
+## このドキュメントの読み方
+
+各プロジェクトページは以下の構成で統一されています:
+
+1. **前提条件** — 始める前に必要な環境・アカウント
+2. **手順** — コピー＆ペーストで実行できるコマンド
+3. **確認方法** — 各ステップの成功判定基準
+4. **トラブルシューティング** — よくあるエラーと解決策（表形式）
+
+---
+
+## プロジェクト一覧
+
+| プロジェクト | 用途 | GitHub |
+|-------------|------|--------|
+| Outbound Form Agent | Twenty CRM 企業のフォーム自動送信 | [リポジトリ](https://github.com/Gracecom1/outbound-form-agent) |
+| Paradigm Docs | このドキュメントサイト | [リポジトリ](https://github.com/Gracecom1/paradigm-docs) |
+| Twenty CRM | セルフホスト CRM（API 連携） | [twenty.paradigmjp.com](https://twenty.paradigmjp.com) |
+
+---
+
+## 困ったときは
+
+| 状況 | 見るべきページ |
+|------|--------------|
+| インストールで躓いた | [セットアップ](/docs/outbound-form-agent/setup) → トラブルシューティング |
+| コマンドがわからない | [CLI リファレンス](/docs/outbound-form-agent/api) → 全オプション一覧 |
+| CRM に繋がらない | [Twenty CRM 連携](/docs/twenty-crm) → トラブルシューティング |
+| エラーの意味がわからない | 各ページのトラブルシューティング表を参照 |
+| Git の使い方がわからない | [CLI ツール群](/docs/cli-tools) → 共通 Git 運用 |

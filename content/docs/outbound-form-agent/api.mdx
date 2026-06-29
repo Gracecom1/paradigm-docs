@@ -1,52 +1,252 @@
 ---
 title: CLI リファレンス
-description: Outbound Form Agent の全 CLI オプション
+description: Outbound Form Agent の全 CLI コマンド — 実務運用マニュアル
 ---
+
+このページでは、Outbound Form Agent の**全 CLI コマンド・全オプション・実践的な運用ノウハウ**を網羅します。
 
 ## 基本コマンド
 
 ```bash
-node dist/index.js [options]
+node dist/index.js [オプション]
 ```
 
-## オプション一覧
+---
 
-| オプション | 説明 | 例 |
-|-----------|------|-----|
-| `--single` | 1社のみ処理 | `--single` |
-| `--dry-run` | 送信なし・検出のみ | `--dry-run` |
-| `--max <n>` | 最大 n 社処理 | `--max 5` |
-| `--concurrency <n>` | 並列数（デフォルト8） | `--concurrency 4` |
-| `--company <name>` | 特定企業のみ | `--company "Joburg"` |
-| `--timeout <ms>` | フォーム操作タイムアウト (ms) | `--timeout 90000` |
+## 全オプション一覧
 
-## 実行例
+| オプション | 値 | デフォルト | 説明 |
+|-----------|-----|----------|------|
+| `--single` | — | — | **最もよく使う**。1 社だけテスト送信。本番前に必ず実行 |
+| `--dry-run` | — | — | 実際の送信はせず、フォーム検出・解析だけ行う |
+| `--max <n>` | 数字 | 全件 | 処理する最大企業数。例: `--max 10` |
+| `--concurrency <n>` | 1〜16 | 8 | 同時並列数。サーバー負荷が高い時は 4 以下に下げる |
+| `--company <name>` | 文字列 | — | 特定の企業名に絞る。部分一致。例: `--company "Acme"` |
+| `--timeout <ms>` | ミリ秒 | 120000 | 1 社あたりのタイムアウト。遅いサイト用に増やせる |
+| `--log-level` | debug/info/warn/error | info | ログの詳細度。トラブル時は `debug` に |
+| `--output <path>` | ファイルパス | stdout | 結果を JSON ファイルに書き出す |
+
+---
+
+## 実践シナリオ別コマンド集
+
+### 🆕 初回セットアップから初実行まで
 
 ```bash
-# 全件バッチ
+# 1. コードを取得
+git clone https://github.com/Gracecom1/outbound-form-agent.git
+cd outbound-form-agent
+
+# 2. 依存をインストール
+npm install
+
+# 3. 環境変数を設定
+cp .env.example .env
+nano .env  # TWENTY_API_KEY, DEEPSEEK_API_KEY を入力
+
+# 4. ビルド
+npm run build
+
+# 5. まずは安全にドライラン（何も送信されない）
+node dist/index.js --dry-run
+
+# 6. 問題なければ 1 社テスト送信
+node dist/index.js --single
+
+# 7. Twenty CRM で結果を確認 → OK なら本番実行
+```
+
+### 📥 毎朝の日次ルーチン
+
+```bash
+# 1. 最新コードに更新
+cd ~/outbound-form-agent
+git pull
+
+# 2. 依存関係が変わっていないか確認
+npm install
+
+# 3. 何が変わったか確認
+git log --oneline -5
+
+# 4. 必要なら再ビルド
+npm run build
+
+# 5. まずドライランで正常動作を確認
+node dist/index.js --dry-run --max 3
+
+# 6. 問題なければ本番実行
 node dist/index.js
-
-# 開発・テスト
-node dist/index.js --single           # 1社テスト
-node dist/index.js --dry-run          # 検出のみ
-node dist/index.js --max 3            # 3社まで
-
-# パフォーマンス調整
-node dist/index.js --concurrency 4    # 並列4
-
-# 特定企業デバッグ
-node dist/index.js --company "Ocaso"  # 1社指定
 ```
 
-## Docker
+### 🐛 トラブル発生時
 
 ```bash
+# エラーが出た場合、まずデバッグログで再実行
+node dist/index.js --single --log-level debug 2>&1 | tee debug.log
+
+# 特定の企業だけを対象に
+node dist/index.js --company "問題の企業名" --log-level debug
+
+# タイムアウトが頻発するなら延長
+node dist/index.js --timeout 180000  # 3 分
+
+# 並列数を減らして安定稼働
+node dist/index.js --concurrency 2
+
+# 10 社だけテスト
+node dist/index.js --max 10 --concurrency 2
+```
+
+### 📊 結果をファイルに保存
+
+```bash
+# JSON 出力をファイルに保存（後で集計可能）
+node dist/index.js --output result.json
+cat result.json | python3 -m json.tool | head -50
+
+# 日付入りで保存
+node dist/index.js --output "$(date +%Y%m%d)_result.json"
+```
+
+### ⏰ cron で完全自動化
+
+```bash
+# crontab を開く
+crontab -e
+
+# 以下を追加（毎日 午前 9 時 + 午後 6 時に実行）
+0 9 * * * cd ~/outbound-form-agent && git pull && npm install && npm run build && node dist/index.js >> ~/ofa.log 2>&1
+0 18 * * * cd ~/outbound-form-agent && node dist/index.js >> ~/ofa.log 2>&1
+
+# ★ 注意: crontab では ~ が展開されない場合がある。フルパス推奨:
+0 9 * * * cd /home/user/outbound-form-agent && /usr/bin/git pull && /usr/bin/npm install && /usr/bin/npm run build && /usr/bin/node dist/index.js >> /home/user/ofa.log 2>&1
+
+# ★ 環境変数を読み込ませる場合:
+0 9 * * * . /home/user/outbound-form-agent/.env && cd /home/user/outbound-form-agent && node dist/index.js >> /home/user/ofa.log 2>&1
+```
+
+---
+
+## deploy.sh の使い方
+
+```bash
+# Docker か Node.js かを自動判定して実行
+bash deploy.sh
+
+# 単体テスト（1 社のみ）
+bash deploy.sh --single
+
+# cron モード（Docker コンテナで 30 分間隔実行）
+bash deploy.sh --cron
+```
+
+`deploy.sh` は以下の流れで動作します:
+1. Docker が使えるかチェック → 使えれば Docker、なければ Node.js 直実行
+2. 環境変数 `.env` を読み込み
+3. 本番実行（`--single` 時は 1 社のみ）
+4. `--cron` 時は Docker コンテナをバックグラウンド起動し、30 分間隔で実行
+
+---
+
+## Docker での運用
+
+```bash
+# イメージをビルド
+docker build -t outbound-form-agent .
+
+# 1 社テスト
 docker run --rm --env-file .env outbound-form-agent --single
+
+# 本番実行
+docker run --rm --env-file .env outbound-form-agent
+
+# cron モード（30 分間隔で自動実行）
+docker run -d --restart always --env-file .env --name ofa-cron outbound-form-agent --cron
+
+# ログを見る
+docker logs -f ofa-cron
+
+# 停止
+docker stop ofa-cron && docker rm ofa-cron
 ```
 
-## deploy.sh
+---
+
+## ログの見方
+
+### 正常時
+
+```
+[INFO] Fetching companies from Twenty CRM...
+[INFO] Found 847 companies, 156 with status '送信待ち / 未対応'
+[INFO] Starting orchestration with concurrency=8...
+[OK] Company "Acme Corp": form found at /contact, submitted successfully
+[OK] Company "Example Ltd": form found at /inquiry, submitted successfully
+[INFO] Completed 10/156 companies (6%)
+```
+
+### エラー時
+
+```
+[WARN] Company "Slow Site": request timeout after 120s, retrying (attempt 2/3)
+[ERROR] Company "Blocked Site": CAPTCHA detected (reCAPTCHA v2), skipping
+[ERROR] Company "No Form": no form elements found on homepage
+```
+
+### 完了レポート
+
+```
+=== OUTBOUND FORM AGENT — RUN COMPLETE ===
+Total:     156 companies
+Success:   142 (91.0%)
+Failed:    14 (9.0%)
+  - CAPTCHA:  8
+  - No form:   4
+  - Timeout:   2
+Duration:  18m 34s
+```
+
+---
+
+## エラー時の対処フロー
+
+| 現象 | 原因 | 対処 |
+|------|------|------|
+| `TWENTY_API_KEY is required` | .env 未設定 | `cp .env.example .env` → キー入力 |
+| `ECONNREFUSED twenty.paradigmjp.com` | CRM 停止 | `docker ps \| grep twenty` で起動確認 |
+| `DEEPSEEK_API_KEY is required` | API キー未設定 | [platform.deepseek.com](https://platform.deepseek.com) → Billing |
+| `module not found` | npm install 忘れ | `npm install && npm run build` |
+| 全社スキップ | CRM に「送信待ち」企業なし | Twenty CRM でステータス確認 |
+| 特定サイトだけ失敗 | サイト構造の変化 | `--company "企業名" --log-level debug` で詳細調査 |
+| `git pull` でコンフリクト | ローカル編集と競合 | `git stash && git pull && git stash pop` |
+
+---
+
+## Git 運用の基本
 
 ```bash
-bash deploy.sh           # Docker/Node.js 自動判定 → 本番実行
-bash deploy.sh --cron    # cron モード起動（Docker 要）
+# 現在の状態を確認
+git status
+
+# リモートの変更を取り込む
+git pull
+
+# 変更履歴を見る（直近 5 件）
+git log --oneline -5
+
+# 特定のコミットの詳細
+git show <コミットID>
+
+# ローカルの変更を一時的に退避
+git stash
+git pull
+git stash pop
+
+# 特定のリリースに戻す
+git checkout v1.2.0
+
+# 最新に戻す
+git checkout main
+git pull
 ```

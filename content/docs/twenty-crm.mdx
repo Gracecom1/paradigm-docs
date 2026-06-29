@@ -1,52 +1,218 @@
 ---
 title: Twenty CRM 連携
-description: セルフホスト Twenty CRM との API 連携
+description: セルフホスト Twenty CRM の API 完全運用ガイド — セットアップから日次運用まで
 ---
 
-## セットアップ
+Twenty CRM は `https://twenty.paradigmjp.com` にセルフホストされています。このページでは、API の全操作手順を初心者でも実行できるよう解説します。
 
-Twenty CRM は `https://twenty.paradigmjp.com` にセルフホストされています。
+---
 
-### 環境変数
+## 前提 — JWT トークンの取得方法
+
+Twenty CRM の API は JWT（JSON Web Token）で認証します。
+
+### 管理画面から取得
+
+1. `https://twenty.paradigmjp.com` にログイン
+2. 左下のユーザーアイコン → **Settings** → **API**
+3. 「Generate Key」をクリック
+4. 表示された JWT をコピー（**この画面を閉じると二度と表示されません**）
+
+### curl で動作確認
 
 ```bash
-# .env ファイルに必要な変数
+# JWT を環境変数に設定
+TWENTY_JWT="eyJhbGciOiJIUzI1NiIs..."
+
+# 自分のユーザー情報を取得（API キー有効性テスト）
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  https://twenty.paradigmjp.com/rest/current-user | python3 -m json.tool | head -5
+```
+
+---
+
+## 環境変数の設定
+
+```bash
+# .env ファイル
 TWENTY_BASE_URL=https://twenty.paradigmjp.com
-TWENTY_API_KEY=xxx-twenty-jwt
+TWENTY_API_KEY=eyJhbGciOiJIUzI1NiIs... # ← 上記で取得した JWT
 ```
 
-### 企業一覧取得
+**絶対にやってはいけないこと**:
+- `.env` ファイルを Git にコミットしない（`.gitignore` に入っているか確認）
+- JWT をチャットやメールで共有しない
+- 本番サーバーの `.env` は必ずバックアップを取る
 
-```http
-GET /rest/companies?limit=200&order_by=createdAt[DescNullsLast]
-Authorization: Bearer ${token}
+```bash
+# 安全にバックアップ
+cp .env .env.backup.$(date +%Y%m%d)
 ```
 
-### 企業ステータス更新
+---
 
-```json
-PATCH /rest/companies/:id
-Content-Type: application/json
+## API リファレンス（curl 実行可能）
 
-{ "paradigmSalesStatus": "送信済み / 未対応" }
+### 企業一覧の取得
+
+```bash
+# 全件取得（最大 10,000 件）
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?limit=10000" \
+  | python3 -m json.tool > companies.json
+
+# 件数だけ確認
+cat companies.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['data']['companies']))"
+
+# 最新 200 件
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?limit=200&order_by=createdAt[DescNullsLast]" \
+  | python3 -m json.tool | head -80
+
+# ★ 注意: 日本語フィルタ（パラメータ名を含む）は API が 400 エラーを返す場合がある
+# そのため Outbound Form Agent は全件取得後にクライアント側でフィルタリングしています
 ```
+
+### 特定企業の取得
+
+```bash
+# 企業 ID を指定（ID は一覧取得で確認）
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies/COMPANY_UUID" \
+  | python3 -m json.tool
+```
+
+### 企業の検索
+
+```bash
+# 企業名で検索
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?filter=name[ilike]%25Acme%25&limit=10" \
+  | python3 -m json.tool
+```
+
+### 企業ステータスの更新
+
+```bash
+# 送信成功時
+curl -s -X PATCH \
+  -H "Authorization: Bearer $TWENTY_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"paradigmSalesStatus": "送信済み / 未対応"}' \
+  "https://twenty.paradigmjp.com/rest/companies/COMPANY_UUID"
+
+# 手動確認が必要な場合
+curl -s -X PATCH \
+  -H "Authorization: Bearer $TWENTY_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"paradigmSalesStatus": "手動確認 / 未対応", "paradigmLastError": "フォームなし"}' \
+  "https://twenty.paradigmjp.com/rest/companies/COMPANY_UUID"
+
+# ブロック時
+curl -s -X PATCH \
+  -H "Authorization: Bearer $TWENTY_JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"paradigmSalesStatus": "ブロック / 未対応", "paradigmLastError": "reCAPTCHA v2 detected"}' \
+  "https://twenty.paradigmjp.com/rest/companies/COMPANY_UUID"
+```
+
+---
 
 ## カスタムフィールド
 
-| フィールド | 型 | 内容 |
-|-----------|-----|------|
-| `paradigmSalesStatus` | `TEXT` | 営業ステータス |
-| `paradigmFormUrl` | `LINK` | フォーム URL |
-| `paradigmDemoUrl` | `LINK` | デモサイト URL |
-| `paradigmLastError` | `TEXT` | 最終エラー |
-| `paradigmCountryName` | `TEXT` | 国名 |
-| `paradigmIndustryName` | `TEXT` | 業種 |
+Outbound Form Agent は Twenty CRM のカスタムフィールドを使って状態を管理します。
 
-## 日本語ステータス値
+| フィールド名 | 型 | 用途 | 書き込み元 |
+|-------------|-----|------|-----------|
+| `paradigmSalesStatus` | `TEXT` | 営業ステータス（最も重要） | Agent が自動更新 |
+| `paradigmFormUrl` | `LINK` | 検出された問い合わせフォームの URL | Agent が自動記録 |
+| `paradigmDemoUrl` | `LINK` | 企業のデモサイト URL | 手動設定（データソース） |
+| `paradigmLastError` | `TEXT` | 直近のエラー内容 | Agent が失敗時に記録 |
+| `paradigmCountryName` | `TEXT` | 対象国 | 手動設定（データソース） |
+| `paradigmIndustryName` | `TEXT` | 業種 | 手動設定（データソース） |
 
-| 値 | 意味 |
-|----|------|
-| `送信待ち / 未対応` | フォーム送信待機中 |
-| `送信済み / 未対応` | フォーム送信成功 |
-| `手動確認 / 未対応` | 自動送信失敗 |
-| `ブロック / 未対応` | CAPTCHA または Cloudflare でブロック |
+### カスタムフィールドの作成手順
+
+Twenty CRM の管理画面から:
+
+1. **Settings** → **Data Model** → **Companies**
+2. 「Add Field」→ **TEXT** を選択
+3. フィールド名を `paradigmSalesStatus` と入力
+4. 同様に他のフィールドも追加
+
+---
+
+## 日本語ステータス値の完全な意味
+
+Outbound Form Agent が使用するステータス値と、その後のアクション:
+
+| ステータス値 | 意味 | 次のアクション |
+|------------|------|---------------|
+| `送信待ち / 未対応` | フォーム送信待機中。Agent の処理対象 | Agent が自動処理 |
+| `送信済み / 未対応` | フォーム送信成功、企業からの返信待ち | 人間が返信を確認 |
+| `手動確認 / 未対応` | 自動送信失敗 → 人の判断が必要 | エラー内容を確認し、手動でフォーム送信するか判断 |
+| `ブロック / 未対応` | CAPTCHA 等でブロックされ送信不可 | 別の方法（メール等）で連絡を検討 |
+
+---
+
+## 日次運用チェックリスト
+
+```bash
+# 1. CRM が稼働しているか確認
+curl -sI https://twenty.paradigmjp.com | head -1
+# → HTTP/2 200 なら OK
+
+# 2. 送信待ちの企業数を確認
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?limit=10000" \
+  | python3 -c "
+import json, sys
+data = json.load(sys.stdin)['data']['companies']
+pending = [c for c in data if c.get('paradigmSalesStatus') == '送信待ち / 未対応']
+print(f'送信待ち: {len(pending)} 社')
+"
+
+# 3. Agent を実行
+cd ~/outbound-form-agent && node dist/index.js
+
+# 4. 結果を確認
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?limit=10000" \
+  | python3 -c "
+import json, sys
+data = json.load(sys.stdin)['data']['companies']
+sent = [c for c in data if c.get('paradigmSalesStatus') == '送信済み / 未対応']
+manual = [c for c in data if c.get('paradigmSalesStatus') == '手動確認 / 未対応']
+blocked = [c for c in data if c.get('paradigmSalesStatus') == 'ブロック / 未対応']
+print(f'送信済み: {len(sent)}')
+print(f'手動確認: {len(manual)}')
+print(f'ブロック: {len(blocked)}')
+"
+```
+
+---
+
+## トラブルシューティング
+
+| エラー | 原因 | 解決方法 |
+|--------|------|---------|
+| `401 Unauthorized` | JWT 期限切れ | 管理画面で再発行 |
+| `404 Not Found` | 企業 ID 誤り | 企業一覧で正しい UUID を確認 |
+| `400 Bad Request`（日本語フィルタ時） | Twenty REST API の日本語非対応 | 全件取得 → クライアント側でフィルタリング |
+| `CONNECTION_REFUSED` | Twenty サーバー停止 | `docker ps \| grep twenty` で起動確認 |
+| 更新が反映されない | キャッシュ | 60 秒待って再確認 |
+| 大量データで応答遅延 | 取得件数過多 | `limit=200` に減らして分割取得 |
+
+---
+
+## バックアップと復元
+
+```bash
+# 企業データをバックアップ
+curl -s -H "Authorization: Bearer $TWENTY_JWT" \
+  "https://twenty.paradigmjp.com/rest/companies?limit=10000" \
+  | python3 -m json.tool > "backup_$(date +%Y%m%d_%H%M%S).json"
+
+# ★ API だけでは復元できない。PostgreSQL 直接バックアップ推奨:
+docker exec twenty-db pg_dump -U twenty > twenty_backup.sql
+```

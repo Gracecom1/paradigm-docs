@@ -1,39 +1,315 @@
 ---
 title: CLI ツール群
-description: CLI 完結の完全自動化パイプライン
+description: 全プロジェクトの CLI 操作マニュアル — インストール・日次運用・トラブル対応
+---
+
+Paradigm の全ツールは **CLI 完結**（GUI 不要・ブラウザ不要）で動作します。このページでは全ツールの共通操作パターンと運用ノウハウを解説します。
+
 ---
 
 ## ツール一覧
 
-| ツール | 説明 | リポジトリ |
-|--------|------|-----------|
-| `outbound-form-agent` | フォーム自動送信 | [GitHub](https://github.com/Gracecom1/outbound-form-agent) |
-| `paradigm-docs` | ドキュメントサイト | [GitHub](https://github.com/Gracecom1/paradigm-docs) |
+| ツール | 用途 | リポジトリ | 主なコマンド |
+|--------|------|-----------|-------------|
+| `outbound-form-agent` | Twenty CRM からフォーム自動送信 | [GitHub](https://github.com/Gracecom1/outbound-form-agent) | `node dist/index.js` |
+| `paradigm-docs` | このドキュメントサイト | [GitHub](https://github.com/Gracecom1/paradigm-docs) | `npm run build` |
 
-## 共通 CLI パターン
+---
 
-### 単体テスト
+## 共通セットアップパターン
 
-```bash
-node dist/index.js --single
-```
-
-### ドライラン
+全ツールに共通する初回セットアップの流れです:
 
 ```bash
-node dist/index.js --dry-run
+# === 全てのツールに共通 ===
+
+# 1. コードの取得
+git clone https://github.com/Gracecom1/<プロジェクト名>.git
+cd <プロジェクト名>
+
+# 2. 依存関係のインストール
+npm install
+
+# 3. 環境変数の設定
+cp .env.example .env
+# → .env を編集して API キー等を入力
+
+# 4. ビルド
+npm run build
 ```
 
-### Docker デプロイ
+### Git が入っていない場合
 
 ```bash
-bash deploy.sh
+# macOS
+brew install git
+
+# Ubuntu
+sudo apt install git
+
+# インストール確認
+git --version
 ```
 
-## 自動化の原則
+### Node.js が入っていない場合
 
-1. **CLI 完結** — すべての操作はターミナル上で完結
-2. **日本語最適化** — エラーメッセージ・ステータス値は日本語
-3. **エラー耐性** — リトライ・タイムアウト・グレースフルデグラデーション
-4. **監視可能** — 構造化ログ・進捗表示・サマリレポート
-5. **AGENTS.md 準拠** — コーディング規約を厳格に遵守
+詳細は [セットアップガイド](/docs/outbound-form-agent/setup) を参照。
+
+---
+
+## 共通 Git 運用パターン
+
+コードを最新に保ち、安全に運用するための Git コマンド集です。
+
+### 毎日の更新
+
+```bash
+# 作業前に必ず最新コードを取得
+cd ~/<プロジェクト名>
+git pull
+
+# 変更内容を確認
+git log --oneline -10
+
+# 自分のローカル変更がないか確認
+git status
+```
+
+### 変更があった場合の更新
+
+```bash
+# パッケージが更新された可能性があるので再インストール
+npm install
+
+# 再ビルドが必要
+npm run build
+```
+
+### コンフリクト（競合）した場合
+
+```bash
+# ★ git pull で CONFLICT が出た場合
+
+# 1. ローカルの変更を一時退避
+git stash
+
+# 2. 最新コードを取得
+git pull
+
+# 3. 退避した変更を戻す
+git stash pop
+
+# 4. 再度競合したら、自分が編集したファイルを確認
+git status
+# → both modified: <ファイル名> が競合ファイル
+```
+
+### 特定バージョンに固定したい場合
+
+```bash
+# リリースタグ一覧
+git tag
+
+# 特定バージョンに切り替え
+git checkout v1.2.0
+
+# 最新に戻す
+git checkout main
+git pull
+```
+
+### 何か壊れたら最初からやり直す
+
+```bash
+# 最終手段: ディレクトリごと削除して再クローン
+cd ~
+rm -rf <プロジェクト名>
+git clone https://github.com/Gracecom1/<プロジェクト名>.git
+cd <プロジェクト名>
+npm install
+cp .env.example .env   # API キーは再入力が必要
+npm run build
+```
+
+---
+
+## 共通トラブルシューティング
+
+### npm install が失敗する
+
+```bash
+# キャッシュをクリアして再試行
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+```
+
+### ビルドが失敗する
+
+```bash
+# 完全にクリーンな状態から再ビルド
+rm -rf node_modules .next dist
+npm install
+npm run build
+```
+
+### 環境変数が読めていない
+
+```bash
+# .env が存在するか確認
+ls -la .env
+
+# 内容を確認（API キーは伏せて）
+cat .env | grep -v KEY
+
+# 読み込まれているかテスト
+node -e "require('dotenv').config(); console.log(process.env.TWENTY_BASE_URL)"
+```
+
+### ポートが既に使われている
+
+```bash
+# 使用中のポートを確認（macOS）
+lsof -i :3000
+
+# プロセスを強制終了
+kill -9 <PID>
+```
+
+---
+
+## cron で全自動化
+
+```bash
+# crontab を編集
+crontab -e
+
+# 以下を追加（各プロジェクトのパスは環境に合わせて変更）
+
+# outbound-form-agent: 毎日 9:00 + 18:00 に実行
+0 9 * * * cd /home/user/outbound-form-agent && /usr/bin/git pull -q && /usr/bin/npm install --silent && /usr/bin/npm run build && /usr/bin/node dist/index.js >> /home/user/ofa.log 2>&1
+0 18 * * * cd /home/user/outbound-form-agent && /usr/bin/node dist/index.js >> /home/user/ofa.log 2>&1
+
+# paradigm-docs: 毎日 3:00 に再ビルド + 再デプロイ
+0 3 * * * ssh root@178.105.138.55 /root/sync-docs.sh >> /home/user/docs-sync.log 2>&1
+```
+
+> **注意**: crontab では `~` が展開されないため、必ず **絶対パス** で指定してください。
+
+### cron のログを確認する
+
+```bash
+# 実行ログ
+tail -50 ~/ofa.log
+
+# システムメール（エラーがある場合）
+mail
+```
+
+---
+
+## Docker 共通操作
+
+```bash
+# 稼働中のコンテナ一覧
+docker ps
+
+# ログをリアルタイム表示
+docker logs -f <コンテナ名>
+
+# コンテナを再起動
+docker restart <コンテナ名>
+
+# すべての停止コンテナを削除（ディスク節約）
+docker container prune -f
+
+# すべての未使用イメージを削除
+docker image prune -af
+
+# ディスク使用状況
+docker system df
+```
+
+---
+
+## 作業環境チェックリスト
+
+毎日の運用開始前に以下を確認する習慣をつけると、トラブルを未然に防げます。
+
+```bash
+# □ 1. インターネット接続
+ping -c 1 8.8.8.8
+
+# □ 2. CRM が稼働している
+curl -sI https://twenty.paradigmjp.com | head -1
+
+# □ 3. ドキュメントサイトが表示される
+curl -sI https://docs.paradigmjp.com | head -1
+
+# □ 4. コードが最新
+cd ~/outbound-form-agent && git fetch && git status
+
+# □ 5. ディスク容量に余裕がある
+df -h /
+
+# □ 6. メモリに余裕がある
+free -h
+```
+
+---
+
+## システム全体構成図
+
+```
+┌─────────────────────────────────────────────────┐
+│                Hetzner CX22 (178.105.138.55)      │
+│                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐ │
+│  │ Twenty   │  │ paradigm │  │ outbound-form-   │ │
+│  │ CRM      │  │ -docs    │  │ agent (cron)      │ │
+│  │ :80      │  │ :3000    │  │                    │ │
+│  └──────────┘  └──────────┘  └──────────────────┘ │
+│                                                   │
+│  ┌──────────────────────────────────────────────┐ │
+│  │           Traefik (reverse proxy)              │ │
+│  │  twenty.paradigmjp.com  →  twenty             │ │
+│  │  docs.paradigmjp.com    →  paradigm-docs      │ │
+│  └──────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────┘
+         ▲                          ▲
+         │                          │
+    Cloudflare DNS             Cloudflare DNS
+    (A record → IP)            (A record → IP)
+```
+
+---
+
+## プロジェクト間の連携
+
+```
+outbound-form-agent（フォーム送信）
+  │
+  ├─ 企業取得: Twenty CRM REST API
+  ├─ フォーム解析: DeepSeek API
+  └─ 結果書き戻し: Twenty CRM REST API
+
+paradigm-docs（ドキュメントサイト）
+  │
+  ├─ 手書きドキュメント: content/docs/ 以下
+  ├─ 外部収集: content/docs/external/ 以下
+  └─ 自動デプロイ: Hetzner Docker
+```
+
+---
+
+## 新規ツール追加時のチェックリスト
+
+1. [ ] GitHub リポジトリ作成（`Gracecom1/<ツール名>`）
+2. [ ] `README.md` にセットアップ手順を記載
+3. [ ] `.env.example` を用意
+4. [ ] `npm run build` でビルド成功確認
+5. [ ] このドキュメントサイトの `content/docs/meta.json` に追加
+6. [ ] `content/docs/` 下に `.mdx` ファイル作成
+7. [ ] Task.md 更新
+8. [ ] ビルド確認（`npm run build`）→ エラーゼロ
+9. [ ] コミット + プッシュ + デプロイ
