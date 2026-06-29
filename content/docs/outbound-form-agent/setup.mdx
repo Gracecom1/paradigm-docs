@@ -1,165 +1,111 @@
 ---
 title: セットアップ
-description: Outbound Form Agent の環境構築 — 初心者向け完全ガイド（5 分で運用開始）
+description: Outbound Form Agent の使い方 — 前提条件・操作方法・トラブル対応（Twenty SSOT モデル）
 ---
 
 ## 前提条件
 
-| 必要なもの | 確認コマンド | 最小バージョン |
-|-----------|-------------|--------------|
-| Node.js | `node --version` | 22.x 以上 |
-| npm | `npm --version` | 10.x 以上 |
-| Git | `git --version` | 任意 |
+**あなた自身の PC にインストールするものは何もありません。**  
+エージェントは Hetzner サーバー上で Docker コンテナとして動作します。
 
-### Node.js が入っていない場合
+| 必要なもの | 説明 |
+|-----------|------|
+| Twenty CRM アカウント | `twenty.paradigmjp.com` にログインできること |
+| Hermes チャット | エージェントへの実行指示を出すインターフェース |
+| インターネット接続 | 上記 2 つにアクセスできれば OK |
 
-**macOS**:
-```bash
-brew install node@22
+---
+
+## 操作の流れ
+
 ```
-
-**Ubuntu/Debian**:
-```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-インストール後、ターミナルを再起動して確認:
-```bash
-node --version  # v22.x.x と表示されれば OK
-npm --version   # 10.x.x と表示されれば OK
+Twenty CRM（twenty.paradigmjp.com）
+    │  企業を登録 → ステータスを「送信待ち / 未対応」に
+    │
+Hermes チャット
+    │  「エージェント --max 5 で実行して」
+    │
+    ▼
+Hetzner サーバー
+    │  Agent Runner Webhook (systemd :4444) が受信
+    │  → docker run outbound-form-agent:v2 --max 5
+    │  → Twenty CRM から企業取得 → フォーム送信 → 結果書き戻し
+    │  → コンテナ自動終了
+    │
+Twenty CRM
+      結果を確認（ステータスが自動更新されている）
 ```
 
 ---
 
-## ステップ 1: リポジトリの取得
+## Hermes への指示例
 
-```bash
-cd ~
-git clone https://github.com/Gracecom1/outbound-form-agent.git
-cd outbound-form-agent
 ```
+# 安全確認（送信なしでテスト）
+「エージェントを --dry-run で実行して」
 
-確認: `ls` で `README.md  package.json  src/  deploy.sh  Dockerfile` が表示されれば成功。
+# 1 社テスト
+「エージェントを --single で実行して」
 
----
+# 5 社だけ本番実行
+「エージェントを --max 5 で実行して」
 
-## ステップ 2: 依存パッケージのインストール
-
-```bash
-npm install
-```
-
-初回は 30 秒〜1 分かかります。
-
-### よくあるエラー
-
-| エラー | 原因 | 解決方法 |
-|--------|------|---------|
-| `npm: command not found` | Node.js 未導入 | 前提条件を参照 |
-| `EACCES` | npm 権限不足 | `sudo npm install` は非推奨。[npm 公式の権限修正手順](https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally) を参照 |
-| `node-gyp` エラー | C++ ビルドツール不足 | macOS: `xcode-select --install`, Ubuntu: `sudo apt install build-essential` |
-
----
-
-## ステップ 3: 環境変数の設定
-
-```bash
-cp .env.example .env
-```
-
-`.env` を開いて各項目を設定:
-
-```bash
-TWENTY_BASE_URL=https://twenty.paradigmjp.com
-TWENTY_API_KEY=eyJhbG...
-DEEPSEEK_API_KEY=sk-...
-DEEPSEEK_MODEL=deepseek-chat
-LOG_LEVEL=info
-```
-
-### API キーの取得
-
-**Twenty CRM**: 管理画面 → Settings → API → Generate Key
-
-**DeepSeek**: [platform.deepseek.com](https://platform.deepseek.com) → API Keys
-
----
-
-## ステップ 4: ビルド
-
-```bash
-npm run build
-```
-
-確認: `ls dist/` で `index.js` が表示されれば成功。
-
----
-
-## ステップ 5: 動作確認
-
-```bash
-# 安全なドライラン（送信なし）
-node dist/index.js --dry-run
-
-# 1 社のみテスト送信
-node dist/index.js --single
-
-# 全件処理（本番）
-node dist/index.js
-```
-
-Tweny CRM の `paradigmSalesStatus` が「送信待ち / 未対応」→「送信済み / 未対応」に変わっていれば成功。
-
----
-
-## ステップ 6: cron で定期実行
-
-```bash
-bash deploy.sh --cron
-```
-
-手動設定:
-```bash
-# crontab -e で追加
-*/30 * * * * cd /path/to/outbound-form-agent && node dist/index.js >> /var/log/ofa.log 2>&1
+# 特定企業だけ
+「エージェントを --company "株式会社ABC" で実行して」
 ```
 
 ---
 
-## Docker での実行
+## サーバー構成（参考）
 
-```bash
-# macOS (Apple Silicon)
-brew install docker colima
-colima start --cpu 4 --memory 4
+すべて Hetzner 側にセットアップ済み。あなたが触る必要はありません。
 
-# 本番実行
-bash deploy.sh
+| コンポーネント | 場所 | 状態 |
+|---------------|------|------|
+| Docker イメージ | `outbound-form-agent:v2` | ✅ ビルド済み |
+| Agent Runner | systemd `agent-runner.service` | ✅ 常駐 |
+| .env | `/opt/outbound-form-agent-v2/.env` | ✅ 設定済み |
+| DeepSeek API | API キー設定済み | ✅ 有効 |
 
-# 単体テスト
-bash deploy.sh --single
-```
+---
+
+## 結果の確認方法
+
+1. `twenty.paradigmjp.com` を開く
+2. 企業一覧で `paradigmSalesStatus` 列を確認
+3. ステータスが変化している：
+
+| ステータス | 意味 | 次のアクション |
+|-----------|------|---------------|
+| `送信済み / 未対応` | フォーム送信成功 | 企業からの返信を待つ |
+| `手動確認 / 未対応` | 自動送信失敗 | `paradigmLastError` 列の理由を確認 |
+| `ブロック / 未対応` | CAPTCHA 等でブロック | メール等の別手段で連絡 |
 
 ---
 
 ## トラブルシューティング
 
-### Twenty CRM に接続できない
-1. `TWENTY_BASE_URL` が正しいか確認（末尾 `/` 不要）
-2. `curl -I $TWENTY_BASE_URL` でサーバー応答確認
-3. API キーを再発行
+### エージェントが動かない
 
-### フォームが見つからない
-企業の Web サイトにお問い合わせフォームがない場合、自動スキップ。Twenty CRM の `paradigmLastError` に詳細が記録されます。
+Hermes に以下を伝える：
+```
+「agent-runner の状態を確認して」
+```
+
+Hermes が SSH でサーバーをチェックし、問題があれば自動修復する。
+
+### 全社スキップされる
+
+Twenty CRM に「送信待ち / 未対応」かつ `formUrl` が入力された企業が存在するか確認。
 
 ### DeepSeek API エラー
-[platform.deepseek.com](https://platform.deepseek.com) → Billing で残高確認。
+
+残高・API キーの問題。Hermes に伝えれば確認・対応可能。
 
 ---
 
 ## 次のステップ
 
+- [CLI リファレンス](/docs/outbound-form-agent/api) — Hermes 指示の全オプション
 - [アーキテクチャ](/docs/outbound-form-agent/architecture) — 内部設計の詳細
-- [CLI リファレンス](/docs/outbound-form-agent/api) — 全コマンド・オプション
 - [Twenty CRM 連携](/docs/twenty-crm) — CRM 側の設定
