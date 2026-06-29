@@ -1,188 +1,182 @@
 ---
-title: アーキテクチャ
-description: Outbound Form Agent v2 の内部設計 — Stagehand v3 LOCAL + CDP + DeepSeek
+title: アーキテクチャ v3
+description: Outbound Form Agent v3 の内部設計 — マルチソースパイプライン + MassDNS + 品質ゲート + Stagehand
 ---
 
 ## 全体像
 
-Outbound Form Agent v2 は **「Hermes 指示 → Docker 起動 → 処理 → Twenty 書き戻し」** のワンショットモデルです。
+Outbound Form Agent v3 は **マルチソース収集** と **フォーム自動送信** の 2 つのパイプラインを持つワンショット Docker コンテナです。
 
 ```
 Hermes チャット
-    │  「エージェント --max 5 で実行」
+    │  「--collect-sources us --max 20」
     ▼
-Agent Runner Webhook (:4444, systemd 常駐)
-    │  docker run --rm --env-file .env outbound-form-agent:v2 --max 5
+Hetzner サーバー (SSH)
+    │  docker run --env-file .env -v /var/run/docker.sock:/var/run/docker.sock
+    │  outbound-form-agent:v3 --collect-sources us --max 20
     ▼
 Docker コンテナ（処理後即終了）
     │
-    ├──▶ Twenty CRM REST API
-    │      └─ GET /rest/companies → 「送信待ち」企業を取得
+    ├──▶ マルチソース収集パイプライン
+    │      ├─ crt.sh Certificate Transparency
+    │      ├─ urlscan.io スキャン結果
+    │      ├─ Whoxy WHOIS API
+    │      ├─ ICANN CZDS ゾーンファイル
+    │      └─ Tranco Top 1M リスト
     │
-    ├──▶ Stagehand v3 LOCAL（CDP Chrome）
-    │      ├─ page.goto(formUrl)
-    │      ├─ CAPTCHA 検出（事前チェック）
-    │      ├─ DeepSeek API → 営業文生成
-    │      ├─ Stagehand agent.execute(instruction) → フォーム入力・送信
-    │      └─ 結果判定
+    ├──▶ 重複除去 + DNS 解決
+    │      ├─ ドメイン正規化・重複除去
+    │      └─ MassDNS (massdns:local) 並列解決
     │
-    └──▶ Twenty CRM REST API
-           └─ PATCH /rest/companies/{id} → 結果を書き戻し
+    ├──▶ HTTP スキャン + 技術検出
+    │      ├─ 並列 HTTP HEAD/GET (concurrency: 50)
+    │      └─ Wappalyzer CMS 検出
+    │
+    ├──▶ フォーム URL 自動検出
+    │      └─ 17 パス HEAD プローブ (/contact, /form, ...)
+    │
+    ├──▶ DeepSeek 企業審査
+    │      ├─ スコアリング (0-100)
+    │      └─ 業種判定
+    │
+    ├──▶ 品質ゲート
+    │      ├─ qualScore >= 30 OR CMS 検出 → CRM 登録
+    │      └─ それ以外 → スキップ
+    │
+    ├──▶ CRM 重複チェック
+    │      └─ 既存ドメイン照会 → スキップ
+    │
+    └──▶ Twenty CRM 登録
+           └─ POST /rest/companies (全フィールド完備)
 ```
 
 ---
 
-## ファイル構成
+## ファイル構成 (v3)
 
 ```
 src/
-├── index.ts                # CLI エントリポイント
-├── orchestrator.ts         # 並列ジョブ制御（同時実行数管理）
-├── stagehand-form-agent.ts # Stagehand v3 LOCAL で 1 社処理
-├── config.ts               # 環境変数読み込み
-├── deepseek.ts             # DeepSeek API 営業文生成
-├── message-templates.ts    # フォールバックテンプレート
-├── dummy-data.ts           # ダミーデータ生成（会社名・メール等）
-├── twenty-client.ts        # Twenty CRM REST API クライアント
-├── notify.ts               # Slack Webhook 通知
-├── logger.ts               # 構造化ログ
-└── types.ts                # 共通型定義
+├── index.ts                    # CLI エントリポイント
+├── orchestrator.ts             # 並列ジョブ制御 + マルチソースパイプライン + 品質ゲート
+├── stagehand-form-agent.ts     # Stagehand LOCAL 1社処理
+├── twenty-client.ts            # Twenty CRM REST API クライアント
+├── lead-importer.ts            # リード CRM インポート (Google Maps 含む)
+├── lead-collector.ts           # Google Maps スクレイピング
+├── form-url-finder.ts          # ドメイン → フォーム URL 自動検出 (17パスHEAD)
+├── dns-resolver.ts             # MassDNS Docker ラッパー
+├── http-scanner.ts             # 並列 HTTP スキャン + Wappalyzer CMS 検出
+├── company-qualifier.ts        # DeepSeek 企業審査スコアリング
+├── zone-file-hunter.ts         # ゾーンファイル BIND パース + SMB フィルタ
+├── source-collectors/
+│   ├── registry.ts             # コレクターレジストリ
+│   ├── rate-limiter.ts         # レート制限
+│   ├── crtsh.ts                # crt.sh
+│   ├── urlscan.ts              # urlscan.io
+│   ├── whoxy.ts                # Whoxy WHOIS
+│   ├── czds.ts                 # ICANN CZDS
+│   ├── manta.ts                # Playwright Manta
+│   ├── bbb.ts                  # Playwright BBB
+│   └── tranco.ts               # Tranco Top 1M
+├── deepseek.ts                 # DeepSeek API
+├── message-templates.ts        # フォールバックテンプレート
+├── notify.ts                   # Slack Webhook
+├── config.ts                   # 環境変数
+├── logger.ts                   # 構造化ログ
+└── types.ts                    # 共通型定義
 ```
 
 ---
 
-## 1 社あたりの処理詳細
+## マルチソース収集パイプライン詳細
 
-### 1. 企業情報の取得
+### 1. ソース並列収集
 
-Twenty CRM から処理対象企業を取得。
+5 ソースを同時実行。各ソースは独立してレート制限制御。
 
-```http
-GET /rest/companies?limit=10000
+| ソース | 方式 | レート制限 |
+|--------|------|-----------|
+| crt.sh | Certificate Transparency API | 1 req/2s |
+| urlscan.io | スキャン結果 API | 1 req/5s |
+| Whoxy | WHOIS API | 1 req/10s |
+| CZDS | ICANN ゾーンファイル (.com/.net/.shop/.company) | — |
+| Tranco | Top 1M ドメインリスト | — |
+
+### 2. 重複除去・DNS 解決
+
+```
+生ドメイン
+  → 正規化 (lowercase, www除去, 末尾/除去)
+  → ドメイン単位の Set で重複除去
+  → MassDNS 並列解決 (concurrency: 50)
+  → 解決済みドメインのみ次工程へ
 ```
 
-クライアント側で「送信待ち / 未対応」かつ `formUrl` ありの企業をフィルタ。
+MassDNS は `massdns:local` イメージ (alpine:3.19 + ソースコンパイル) を Docker-in-Docker で実行。
 
-### 2. Stagehand v3 LOCAL ブラウザ起動
-
-Stagehand v3 は CDP（Chrome DevTools Protocol）で Chrome を直接制御。Playwright レイヤーは不要。
+### 3. HTTP スキャン + 技術検出
 
 ```typescript
-const stagehand = new Stagehand({
-  env: "LOCAL",
-  localBrowserLaunchOptions: {
-    headless: true,
-    executablePath: process.env.CHROMIUM_PATH,
-    args: ["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-  },
-  model: {
-    modelName: "deepseek/deepseek-chat",
-    baseURL: "https://api.deepseek.com/v1",
-  },
+// 並列スキャン
+const results = await scanDomains(domains, {
+  concurrency: 50,
+  timeoutMs: 5000,
 });
-await stagehand.init();
+// → { domain, statusCode, server, cms, reachable }
+
+// Wappalyzer CMS 検出
+const cms = await detectCMS(domain);
 ```
 
-### 3. フォームページへのアクセス
+### 4. フォーム URL 自動検出
 
-Stagehand の内部 Page（CDP-backed）でアクセス。
+17 の共通コンタクトパスを HEAD リクエストで並列プローブ:
+`/contact`, `/contact-us`, `/form`, `/inquiry`, `/support`, ...
+
+### 5. DeepSeek 企業審査
 
 ```typescript
-const page = stagehand.context.activePage();
-await page.goto(formUrl, { waitUntil: "networkidle", timeoutMs: 20_000 });
+const result = await qualifyLeads([
+  { websiteUrl, companyName, cms, ... }
+]);
+// → { qualification: { totalScore, industry, ... } }
 ```
 
-### 4. CAPTCHA 事前チェック
-
-agent を走らせる前に高速テキストチェックで CAPTCHA を検出。
-
-| 検出対象 | 方法 | 対処 |
-|---------|------|------|
-| reCAPTCHA v2 | `.g-recaptcha` 要素 | ❌ スキップ |
-| hCaptcha | `.h-captcha` 要素 | ❌ スキップ |
-| Cloudflare Turnstile | `turnstile` テキスト | ❌ スキップ |
-| Cloudflare 盾 | `verify you are human` | ❌ スキップ |
-
-### 5. 営業文生成（DeepSeek）
-
-企業情報をもとに DeepSeek API で営業文を生成。失敗時はテンプレートフォールバック。
-
-### 6. Stagehand agent によるフォーム操作
-
-Stagehand の `agent.execute()` がフォーム検出・入力・送信を自律実行。
-
-```typescript
-const agent = stagehand.agent({
-  model: "deepseek/deepseek-chat",
-  systemPrompt: "あなたはフォーム自動入力エージェントです...",
-});
-const result = await agent.execute({
-  instruction: "お問い合わせフォームに以下の情報を入力して送信してください...",
-  maxSteps: 15,
-});
-```
-
-### 7. 結果判定 → Twenty CRM 書き戻し
-
-| 結果 | CRM ステータス |
-|------|---------------|
-| 送信成功 | `送信済み / 未対応` |
-| CAPTCHA | `ブロック / 未対応` |
-| タイムアウト | `手動確認 / 未対応` |
-| エラー | `手動確認 / 未対応` |
-
----
-
-## 並列処理
-
-Orchestrator が同時実行数を制御。
+### 6. 品質ゲート
 
 ```
-最大 8 並列
-│
-├─ Job 1: Dnb, Inc.          ████████░░░░  (処理中)
-├─ Job 2: Example Corp        ████████████  (完了)
-└─ Job 3...8: 空きスロット
+qualScore >= 30 OR CMS 検出 → CRM 登録
+それ以外 → スキップ (ゴミデータ防止)
 ```
 
-- 上限 8 並列（DeepSeek API レート制限 + メモリ）
-- 完了次第、次のジョブを即補充
-- 全完了でコンテナが終了
+### 7. CRM 重複チェック
 
----
+CRM 登録前に既存ドメインをバッチ照会。既存の場合はスキップ。
 
-## エラーハンドリングとリトライ
+### 8. Twenty CRM 登録
 
-各ジョブは最大 3 回リトライ（指数バックオフ）。
-
-```
-1 回目: 通常実行
-   ├─ 成功 → ステータス更新
-   └─ 失敗 → 1 分待機
-2 回目: リトライ
-   ├─ 成功 → ステータス更新
-   └─ 失敗 → 2 分待機
-3 回目: 最終リトライ
-   ├─ 成功 → ステータス更新
-   └─ 失敗 →「手動確認」+ エラー記録
+```json
+{
+  "name": "...",
+  "domainName": { "primaryLinkUrl": "...", "primaryLinkLabel": "..." },
+  "paradigmCountryName": "米国",
+  "paradigmRegionName": "US",
+  "paradigmSalesStatus": "送信待ち / 未対応",
+  "paradigmDataSources": "crt.sh, urlscan.io",
+  "paradigmDataStatus": "multi_source_collected",
+  "paradigmNextAction": "tech_check",
+  "paradigmFormUrl": { "primaryLinkUrl": "...", ... }
+}
 ```
 
 ---
 
-## Docker 実行モデル
+## CRM 列挙型 (Twenty 日本語SELECT)
 
-**オンデマンドワンショット**。cron や常駐デーモンなし。
-
-```
-# Hermes から実行
-docker run --rm --env-file .env outbound-form-agent:v2 --max 5
-
-# 処理完了 → コンテナ即終了 → リソース解放
-```
-
-- スクリーンショット保存なし
-- ログは 50MB×3 ファイル制限
-- Chrome バイナリ以外の常駐データなし
+| フィールド | 有効値 |
+|-----------|--------|
+| paradigmCountryName | 米国, 日本, 英国, ドイツ, フランス, 韓国, 中国, 台湾, カナダ, オーストラリア, インド, シンガポール, 南アフリカ, 他 |
+| paradigmSalesStatus | 未診断/カルテ生成中/送信待ち/手動確認/送信済み/商談化/提案中/成約/失注 — すべて `/ 未対応` |
+| paradigmIndustryName | 美容サロン, 歯科医院, 飲食店, 建設・工務店, 会計事務所, 小売・店舗, 清掃・メンテナンス, コンサルティング |
 
 ---
 
@@ -190,8 +184,9 @@ docker run --rm --env-file .env outbound-form-agent:v2 --max 5
 
 | コンポーネント | ホスト | 備考 |
 |---------------|--------|------|
-| outbound-form-agent:v2 | Hetzner CX22 | Docker イメージ |
-| agent-runner.service | Hetzner CX22 | systemd 常駐 webhook (:4444) |
+| outbound-form-agent:v3 | Hetzner CX22 | Docker イメージ |
+| massdns:local | Hetzner CX22 | 自前ビルド |
+| wappalyzer/cli | Hetzner CX22 | Docker Hub |
+| .env | `/root/outbound-agent-v3/.env` | API キー類 |
 | Twenty CRM | `twenty.paradigmjp.com` | セルフホスト |
-| DeepSeek API | `api.deepseek.com` | 外部 API |
 | ドキュメント | `docs.paradigmjp.com` | Fumadocs OSS |

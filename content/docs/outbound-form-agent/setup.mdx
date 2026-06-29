@@ -1,12 +1,11 @@
 ---
-title: セットアップ
-description: Outbound Form Agent の使い方 — 前提条件・操作方法・トラブル対応（Twenty SSOT モデル）
+title: セットアップ v3
+description: Outbound Form Agent v3 の使い方 — マルチソース収集・フォーム送信・トラブル対応
 ---
 
 ## 前提条件
 
-**あなた自身の PC にインストールするものは何もありません。**  
-エージェントは Hetzner サーバー上で Docker コンテナとして動作します。
+**あなた自身の PC にインストールするものは何もありません。**
 
 | 必要なもの | 説明 |
 |-----------|------|
@@ -18,94 +17,145 @@ description: Outbound Form Agent の使い方 — 前提条件・操作方法・
 
 ## 操作の流れ
 
+### マルチソース収集（新規リード獲得）
+
 ```
-Twenty CRM（twenty.paradigmjp.com）
-    │  企業を登録 → ステータスを「送信待ち / 未対応」に
-    │
 Hermes チャット
-    │  「エージェント --max 5 で実行して」
-    │
+    │  「--collect-sources us --max 20 で実行して」
     ▼
 Hetzner サーバー
-    │  Agent Runner Webhook (systemd :4444) が受信
-    │  → docker run outbound-form-agent:v2 --max 5
-    │  → Twenty CRM から企業取得 → フォーム送信 → 結果書き戻し
-    │  → コンテナ自動終了
+    │  5ソースからドメイン並列収集 → DNS → HTTP → 審査 → CRM
+    │  コンテナ自動終了
     │
-Twenty CRM
-      結果を確認（ステータスが自動更新されている）
+結果確認
+    └── Twenty CRM 画面 → 新規企業が paradigmSalesStatus 付きで登録される
+```
+
+### フォーム自動送信（CRM の企業に送信）
+
+```
+Hermes チャット
+    │  「--max 5 で実行して」
+    ▼
+Hetzner サーバー
+    │  Twenty CRM から「送信待ち」企業を取得 → Stagehand でフォーム送信
+    │  結果を CRM に書き戻し
+    │
+結果確認
+    ├── Twenty CRM 画面 → paradigmSalesStatus が変化
+    └── 「--history を見せて」
 ```
 
 ---
 
 ## Hermes への指示例
 
+### マルチソース収集
+
+```bash
+# 米国ドメインを 20 件収集
+「--collect-sources us --max 20 で実行して」
+
+# 日本ドメインを 50 件収集
+「--collect-sources jp --max 50 で実行して」
+
+# ゾーンファイルから収集 (.com ドメイン)
+「--zone com --max-scan 100 で実行して」
 ```
-# 安全確認（送信なしでテスト）
-「エージェントを --dry-run で実行して」
 
-# 1 社テスト
-「エージェントを --single で実行して」
+### フォーム送信
 
-# 5 社だけ本番実行
-「エージェントを --max 5 で実行して」
+```bash
+# 5 社だけ本番送信
+「--max 5 で実行して」
 
-# 特定企業だけ
-「エージェントを --company "株式会社ABC" で実行して」
+# 手動確認企業も含めて強制実行
+「--max 5 --force で実行して」
+
+# 安全確認のみ（送信なし）
+「--dry-run で実行して」
+
+# 単一 URL テスト
+「--single-url https://example.com/contact --company "Example" でテストして」
+```
+
+### 履歴確認
+
+```bash
+# 送信履歴
+「--history を見せて」
+
+# 履歴サマリ
+「履歴サマリを見せて」
+```
+
+### 管理
+
+```bash
+# 状態確認
+「エージェントの状態を確認して」
+
+# 再ビルド
+「エージェントを再ビルドして」
 ```
 
 ---
 
 ## サーバー構成（参考）
 
-すべて Hetzner 側にセットアップ済み。あなたが触る必要はありません。
+すべて Hetzner 側にセットアップ済み。
 
 | コンポーネント | 場所 | 状態 |
 |---------------|------|------|
-| Docker イメージ | `outbound-form-agent:v2` | ✅ ビルド済み |
-| Agent Runner | systemd `agent-runner.service` | ✅ 常駐 |
-| .env | `/opt/outbound-form-agent-v2/.env` | ✅ 設定済み |
-| DeepSeek API | API キー設定済み | ✅ 有効 |
+| Docker イメージ | `outbound-form-agent:v3` | ✅ ビルド済み |
+| MassDNS | `massdns:local` | ✅ 自前ビルド |
+| Wappalyzer | `wappalyzer/cli` | ✅ pull 済み |
+| .env | `/root/outbound-agent-v3/.env` | ✅ 設定済み |
+| DeepSeek API | 設定済み | ✅ 有効 |
+| GitHub | `https://github.com/Gracecom1/outbound-form-agent` | ✅ |
 
 ---
 
 ## 結果の確認方法
 
+### Twenty CRM
 1. `twenty.paradigmjp.com` を開く
-2. 企業一覧で `paradigmSalesStatus` 列を確認
-3. ステータスが変化している：
+2. 企業一覧で以下を確認:
 
-| ステータス | 意味 | 次のアクション |
-|-----------|------|---------------|
-| `送信済み / 未対応` | フォーム送信成功 | 企業からの返信を待つ |
-| `手動確認 / 未対応` | 自動送信失敗 | `paradigmLastError` 列の理由を確認 |
-| `ブロック / 未対応` | CAPTCHA 等でブロック | メール等の別手段で連絡 |
+| フィールド | 意味 |
+|-----------|------|
+| paradigmSalesStatus | 収集状態 (送信待ち/未診断/カルテ生成中) |
+| paradigmDataSources | 収集元ソース (crt.sh, urlscan.io, ...) |
+| paradigmDataStatus | データステータス (multi_source_collected) |
+| paradigmLastError | スコア・CMS・フォーム検出詳細 |
 
 ---
 
 ## トラブルシューティング
 
-### エージェントが動かない
+### 全社スキップされる (収集)
+- DeepSeek スコアが 30 未満かつ CMS 未検出 → 品質ゲートで除外
+- `--max` を増やす、または別のリージョンを試す
 
-Hermes に以下を伝える：
-```
-「agent-runner の状態を確認して」
-```
-
-Hermes が SSH でサーバーをチェックし、問題があれば自動修復する。
-
-### 全社スキップされる
-
-Twenty CRM に「送信待ち / 未対応」かつ `formUrl` が入力された企業が存在するか確認。
+### 全社スキップされる (フォーム送信)
+- Twenty CRM に「送信待ち / 未対応」かつ paradigmFormUrl ありの企業が必要
+- マルチソース収集で formUrl が自動検出されていれば OK
 
 ### DeepSeek API エラー
+- 残高・API キーの問題。Hermes に「DeepSeek API の状態を確認して」と伝える
 
-残高・API キーの問題。Hermes に伝えれば確認・対応可能。
+### CAPTCHA で全滅 (フォーム送信)
+- 多くの企業サイトが reCAPTCHA/hCaptcha を導入
+- 非 CAPTCHA サイトでは送信可能
+- hCaptcha/Turnstile は Stagehand が即検出→スキップ
+
+### コンテナ起動失敗
+- Hermes に「エージェントを再ビルドして」と伝える
 
 ---
 
 ## 次のステップ
 
-- [CLI リファレンス](/docs/outbound-form-agent/api) — Hermes 指示の全オプション
+- [CLI リファレンス](/docs/outbound-form-agent/api) — 全 CLI オプション
 - [アーキテクチャ](/docs/outbound-form-agent/architecture) — 内部設計の詳細
-- [Twenty CRM 連携](/docs/twenty-crm) — CRM 側の設定
+- [Twenty CRM 連携](/docs/twenty-crm) — CRM の API 操作

@@ -1,131 +1,111 @@
 ---
-title: CLI リファレンス
-description: Outbound Form Agent の操作 — Hermes チャット指示・全オプション
+title: CLI リファレンス v3
+description: Outbound Form Agent v3 の全 CLI オプション — --collect-sources, --zone, --max, --force
 ---
 
 操作はすべて Hermes チャット経由。コマンドラインや Git 操作は一切不要です。
 
 ## Hermes チャット指示一覧
 
-### 基本
+### マルチソース収集 (v3 新機能)
 
 | 指示 | 説明 |
 |------|------|
-| `エージェントを --dry-run で実行して` | 送信せずフォーム検出・解析だけ確認 |
-| `エージェントを --single で実行して` | 1 社のみテスト送信 |
-| `エージェントを --max 5 で実行して` | 最大 5 社を本番送信 |
-| `エージェントを実行して` | 全件処理 |
+| `--collect-sources us --max 20 で実行して` | 米国ドメインを 20 件収集 → 審査 → CRM |
+| `--collect-sources jp --max 50 で実行して` | 日本ドメインを 50 件収集 |
+| `--zone com --max-scan 100 で実行して` | .com ゾーンファイルから収集 |
 
-### 絞り込み
+### フォーム送信
 
 | 指示 | 説明 |
 |------|------|
-| `エージェントを --company "企業名" で実行して` | 特定企業のみ（部分一致） |
-| `エージェントを --max 10 --single でテスト実行して` | 10 社をシングルスレッドで処理 |
+| `--max 5 で実行して` | 最大 5 社を本番送信 |
+| `--max 5 --force で実行して` | 手動確認企業も強制処理 |
+| `--dry-run で実行して` | 送信せず対象企業リストのみ表示 |
+| `--single-url "https://..." --company "社名" でテストして` | 1URL を直接テスト |
+
+### 履歴確認
+
+| 指示 | 説明 |
+|------|------|
+| `--history を見せて` | 直近 10 件の送信履歴 |
+| `--history 30 を見せて` | 直近 30 件 |
+| `履歴サマリを見せて` | 成功率・CAPTCHA 率サマリ |
 
 ### 管理
 
 | 指示 | 説明 |
 |------|------|
-| `agent-runner の状態を確認して` | Webhook の稼働状態チェック |
-| `agent-runner を再起動して` | Webhook の再起動 |
-| `前回の実行結果を確認して` | Docker の終了ログを確認 |
+| `エージェントの状態を確認して` | Docker コンテナ・イメージ状態 |
+| `エージェントを再ビルドして` | git pull → docker build → デプロイ |
 
 ---
 
-## 全オプション一覧
+## 全 CLI オプション一覧
 
 | オプション | 値 | デフォルト | 説明 |
 |-----------|-----|----------|------|
-| `--dry-run` | — | — | 実際の送信はせず検出のみ。安全確認用 |
-| `--single` | — | — | 1 社だけ処理。初回テスト用 |
+| `--collect-sources <region>` | us/jp/au/gb/... | — | マルチソース収集 (v3) |
+| `--zone <tld>` | com/net/au/com/uk | — | ゾーンファイルハント |
+| `--max-scan <n>` | 数字 | 500 | ゾーンハントの最大スキャン数 |
 | `--max <n>` | 数字 | 全件 | 最大処理数 |
-| `--company <name>` | 文字列 | — | 特定企業名でフィルタ（部分一致） |
-| `--concurrency <n>` | 1〜8 | 8 | 同時並列数 |
-| `--timeout <ms>` | ミリ秒 | 120000 | 1 社あたりタイムアウト |
-| `--log-level` | debug/info/warn/error | info | ログ詳細度 |
+| `--dry-run` | — | — | 送信せず検出のみ |
+| `--force` | — | — | 手動確認企業も強制処理 |
+| `--single-url <url>` | URL | — | 1URL 直接テスト |
+| `--company <name>` | 文字列 | — | 企業名指定/フィルタ |
+| `--timeout <ms>` | ミリ秒 | 120000 | 1社あたりタイムアウト |
+| `--concurrency <n>` | 数字 | 2 | 同時実行数 (最大8) |
+| `--history [n]` | 数字 | 10 | 送信履歴表示 |
+| `--history-summary` | — | — | 履歴サマリ |
+| `--collect <query>` | 文字列 | — | Google 検索収集 |
+| `--debug` | — | — | デバッグログ有効化 |
+| `--help` | — | — | ヘルプ表示 |
 
 ---
 
-## 内部的に実行される Docker コマンド
+## 環境変数 (.env)
 
-以下は Hermes が内部的に実行するコマンド（参考。あなたが打つ必要はありません）。
+| 変数 | 必須 | 説明 |
+|------|------|------|
+| TWENTY_BASE_URL | ✅ | Twenty CRM の URL |
+| TWENTY_API_KEY | ✅ | Twenty API キー |
+| DEEPSEEK_API_KEY | ✅ | DeepSeek API キー |
+| WHOXY_API_KEY | — | Whoxy WHOIS API |
+| CZDS_TOKEN | — | ICANN CZDS トークン |
+| URLSCAN_API_KEY | — | urlscan.io API キー |
+| DOCKER_HOST | ✅ | Docker ソケットパス |
+| FORM_CONCURRENCY | — | 同時実行数 |
+| FORM_TIMEOUT_MS | — | タイムアウト |
+| SLACK_WEBHOOK_URL | — | Slack 通知 |
+
+---
+
+## Docker コマンド（参考）
+
+以下は Hermes が内部的に実行するコマンド。
 
 ```bash
-# ドライラン
-docker run --rm --env-file /opt/outbound-form-agent-v2/.env \
-  --network host outbound-form-agent:v2 --dry-run
+# マルチソース収集
+docker run --rm --env-file /root/outbound-agent-v3/.env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  outbound-form-agent:v3 --collect-sources us --max 20
 
-# 本番 5 社
-docker run --rm --env-file /opt/outbound-form-agent-v2/.env \
-  --network host outbound-form-agent:v2 --max 5
+# ゾーンファイルハント
+docker run --rm --env-file /root/outbound-agent-v3/.env \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  outbound-form-agent:v3 --zone com --max-scan 100
 
-# 1 社テスト
-docker run --rm --env-file /opt/outbound-form-agent-v2/.env \
-  --network host outbound-form-agent:v2 --single
+# フォーム送信
+docker run --rm --env-file /root/outbound-agent-v3/.env \
+  outbound-form-agent:v3 --max 5 --force
 
-# 特定企業
-docker run --rm --env-file /opt/outbound-form-agent-v2/.env \
-  --network host outbound-form-agent:v2 --company "株式会社ABC"
-```
+# 単一 URL テスト
+docker run --rm --env-file /root/outbound-agent-v3/.env \
+  outbound-form-agent:v3 --single-url "https://example.com/contact" \
+  --company "Example Corp"
 
----
-
-## エージェントの内部動作
-
-```
-Hermes 指示
-  → Agent Runner Webhook (:4444) に POST
-  → systemd が docker run を実行
-  → Twenty CRM から企業取得
-  → Stagehand v3 LOCAL (CDP Chrome) でフォーム操作
-  → DeepSeek API で営業文生成
-  → フォーム送信
-  → 結果を Twenty CRM に書き戻し
-  → コンテナ自動終了
-```
-
----
-
-## 実行中の確認
-
-Hermes に以下を伝える：
-```
-「実行中の Docker コンテナを確認して」
-```
-
-Hermes が `docker ps` で状態を確認する。
-
----
-
-## ログの見方
-
-### 正常時
-```
-[OK] Company "Acme Corp": form found, submitted successfully
-[INFO] Completed 10/156 companies (6%)
-```
-
-### CAPTCHA スキップ
-```
-[WARN] Company "Blocked Site": CAPTCHA detected (reCAPTCHA v2), skipping
-```
-
-### タイムアウト
-```
-[WARN] Company "Slow Site": request timeout after 120s, retrying (attempt 2/3)
-```
-
-### 完了レポート
-```
-=== OUTBOUND FORM AGENT — RUN COMPLETE ===
-Total:     156 companies
-Success:   142 (91.0%)
-Failed:    14 (9.0%)
-  - CAPTCHA:  8
-  - No form:   4
-  - Timeout:   2
-Duration:  18m 34s
+# 履歴確認
+docker run --rm outbound-form-agent:v3 --history 10
 ```
 
 ---
@@ -134,7 +114,9 @@ Duration:  18m 34s
 
 | 現象 | 原因 | Hermes への指示 |
 |------|------|----------------|
-| 全社スキップ | CRM に「送信待ち」企業なし | Twenty CRM でステータス確認 |
+| 全社スキップ (収集) | 品質ゲートで除外 | `--max` を増やす |
+| 全社スキップ (送信) | CRM に送信待ち企業なし | `--dry-run` で確認 |
 | DeepSeek エラー | API キー・残高問題 | `DeepSeek API の状態を確認して` |
-| コンテナ起動失敗 | イメージ破損 | `エージェントの Docker イメージを再ビルドして` |
-| Webhook 応答なし | agent-runner 停止 | `agent-runner を再起動して` |
+| コンテナ起動失敗 | イメージ破損 | `エージェントを再ビルドして` |
+| MassDNS エラー | Docker ソケット未マウント | `-v /var/run/docker.sock:...` を確認 |
+| CRM 400 エラー | 列挙型の値が不正 | Hermes に伝えれば自動修正 |
