@@ -1,120 +1,101 @@
 ---
 title: Outbound Form Agent
-description: Twenty CRM 企業リストからフォームを自動発見・自動送信する CLI エージェント — 実務運用ガイド
+description: Twenty CRM SSOT → Stagehand v3 LOCAL でフォーム自動送信 — Hermes チャットからワンクリック実行
 ---
 
 ## これは何か
 
-Outbound Form Agent は、あなたの Twenty CRM に登録されている全企業の Web サイトを巡回し、**問い合わせフォームを自動で見つけて、自動で送信する** ツールです。
+Outbound Form Agent は、**Twenty CRM に登録された企業の問い合わせフォームを自動で送信する**ツールです。
 
-たとえば、CRM に 500 社のリードが入っているとします。1 社ずつブラウザでサイトを開き、フォームを探し、会社名やメッセージを入力して送信する——これを 500 回繰り返すのは非現実的です。Outbound Form Agent は、この作業を**完全自動**で実行します。
+操作はすべて **Twenty CRM** で完結。企業データを登録したら、Hermes に「エージェント実行して」と伝えるだけ。あとは自動で動きます。
 
-## 何ができるのか
+## 操作モデル
 
-| 処理 | 自動 or 手動 |
-|------|------------|
-| 企業の Web サイトにアクセス | 🤖 自動 |
-| お問い合わせフォームを自動発見 | 🤖 自動 |
-| フォームの種類を解析（お問い合わせ・資料請求・デモ） | 🤖 自動 |
-| DeepSeek AI が企業情報に基づいた問い合わせ文を生成 | 🤖 自動 |
-| フォームの全フィールドに自動入力して送信 | 🤖 自動 |
-| 結果を Twenty CRM に自動記録（成功・失敗・ブロック） | 🤖 自動 |
-| エラーや CAPTCHA はスキップして人間に通知 | 🤖 自動 |
+| あなたがすること | 場所 | やること |
+|------------------|------|---------|
+| 企業を登録する | `twenty.paradigmjp.com` | 企業名・ドメイン・フォームURL を入力 |
+| ステータスを「送信待ち」にする | `twenty.paradigmjp.com` | プルダウンで選択 |
+| Hermes に指示する | Hermes チャット | `「エージェント --max 5 で実行して」` |
+| 結果を確認する | `twenty.paradigmjp.com` | ステータスが自動更新されている |
 
-## なぜ必要なのか
+**GUI ダッシュボードは必要ありません。** Twenty CRM が唯一の画面です。
 
-- **時間**: 1 社あたり 3〜5 分かかる手動作業が、20 秒/社になる
-- **漏れ**: 手動だと途中で疲れて抜け漏れが発生。自動化で全件処理
-- **一貫性**: 毎回同じ品質の問い合わせ文を生成
-- **記録**: 結果が Twenty CRM に自動記録されるので追跡可能
-
-## 処理の流れ（パイプライン）
+## 処理の流れ
 
 ```
-あなたの Twenty CRM
-    │  「送信待ち / 未対応」の企業を全件取得
-    ↓
-Orchestrator（司令塔）
-    │  最大 8 社を同時処理
-    ├──────┬──────┬───
-    ↓      ↓      ↓
-  企業A    企業B    企業C...（各社並列で処理）
-
-各社の処理:
-  1. Playwright で stealth ブラウザ起動（bot 検出回避）
-  2. フォームを 3 段階で探索（form → iframe → 全 input）
-  3. CAPTCHA があれば検出 → スキップ
-  4. DeepSeek API に「どんな内容を書けばいいか」を質問
-  5. フォームに自動入力して送信
-  6. 結果を Twenty CRM に書き戻し（成功/失敗/ブロック）
+Twenty CRM（SSOT）
+    │  Hermes から「実行」指示
+    ▼
+Docker コンテナ on Hetzner
+    │  Twenty REST API で「送信待ち」企業を取得
+    ▼
+Stagehand v3 LOCAL（CDP Chrome）
+    │  1 社ずつフォームにアクセス
+    ├─ CAPTCHA 検出 → スキップ
+    ├─ DeepSeek AI が営業文を生成
+    ├─ Stagehand agent がフォーム入力・送信を自律実行
+    └─ 結果を Twenty CRM に書き戻し
 ```
+
+## 技術スタック
+
+| コンポーネント | 技術 | 理由 |
+|---------------|------|------|
+| ブラウザ自動操作 | Stagehand v3 LOCAL + CDP | Playwright 不要。ブラウザを自前管理。外部サービス依存ゼロ |
+| AI 文章生成 | DeepSeek API | 企業情報から適切な営業文を生成 |
+| データ管理 | Twenty CRM REST API | 企業一覧・送信結果の SSOT |
+| 実行基盤 | Docker on Hetzner CX22 | オンデマンド起動・処理後即終了 |
+| 操作インターフェース | Hermes チャット | 「実行して」と言うだけ |
 
 ## 主な特徴
 
 | 特徴 | 説明 |
 |------|------|
-| **CLI 完結** | GUI 不要。ターミナルだけで全操作が完結 |
-| **並列 8 社同時** | 1 社 20 秒 → 500 社でも約 20 分で完了 |
-| **エラーに強い** | 失敗したら最大 3 回再試行、それでも駄目なら安全にスキップ |
-| **CAPTCHA 検出** | reCAPTCHA/hCaptcha/Cloudflare 等 7 種を検出し自動スキップ |
-| **日本語対応** | Twenty CRM の日本語ステータス値に完全対応 |
-| **ゼロクリック** | cron 設定で毎日完全自動実行 |
+| **Twenty SSOT** | 企業データは Twenty CRM だけ。ダッシュボード不要 |
+| **Hermes 操作** | 「--max 5」と伝えれば Docker が起動して処理 |
+| **Stagehand v3** | CDP 直結。Playwright レイヤー不要。bot 検出回避 |
+| **CAPTCHA 自動スキップ** | reCAPTCHA/hCaptcha/Cloudflare を検出しスキップ |
+| **並列 8 社同時** | 1 社約 20 秒。500 社でも約 20 分で完了 |
+| **エラー耐性** | 最大 3 回リトライ。それでも駄目なら安全にスキップ |
+| **日本語完全対応** | Twenty CRM の日本語ステータス値に対応 |
 
-## 5 分で始める
+## Hermes からの実行方法
 
-```bash
-# 1. コードを取得
-git clone https://github.com/Gracecom1/outbound-form-agent.git
-cd outbound-form-agent
+```
+# 1. Twenty CRM で企業を「送信待ち / 未対応」に設定
 
-# 2. 依存パッケージをインストール
-npm install
+# 2. Hermes チャットで実行指示（例）:
+「エージェントを --max 5 --dry-run でテスト実行して」
+「エージェントを --max 10 で本番実行して」
+「エージェントを --company "株式会社ABC" --single で 1 社だけ実行して」
 
-# 3. API キーを設定
-cp .env.example .env
-# → .env を開いて TWENTY_API_KEY と DEEPSEEK_API_KEY を入力
-
-# 4. ビルド
-npm run build
-
-# 5. まずはドライラン（送信されないので安全）
-node dist/index.js --dry-run
-
-# 6. 1 社だけテスト送信
-node dist/index.js --single
-
-# 7. Twenty CRM で結果確認 → OK なら本番実行
-node dist/index.js
+# 3. Twenty CRM で結果確認
+https://twenty.paradigmjp.com
+→ ステータスが「送信済み」「手動確認」等に自動更新されている
 ```
 
-## 毎日の運用
+## サーバー情報
 
-```bash
-# 最新コードを取得
-cd ~/outbound-form-agent
-git pull
+| 項目 | 値 |
+|------|-----|
+| ホスト | Hetzner CX22 |
+| IP | 178.105.138.55 |
+| Docker イメージ | `outbound-form-agent:v2` |
+| Agent Runner Webhook | systemd `agent-runner.service` (:4444) |
+| .env 配置先 | `/opt/outbound-form-agent-v2/.env` |
 
-# 依存関係が更新されていないか確認
-npm install && npm run build
+## 結果ステータス
 
-# 実行
-node dist/index.js
-
-# → Twenty CRM で結果確認: https://twenty.paradigmjp.com
-```
-
-## Tweny CRM ステータスの見方
-
-| status | 意味 | あなたのアクション |
-|--------|------|------------------|
-| `送信待ち / 未対応` | Agent の処理待ち | 何もしなくて OK（Agent が自動処理） |
-| `送信済み / 未対応` | フォーム送信成功 | 企業からの返信を待つ |
-| `手動確認 / 未対応` | 自動送信失敗 | エラー内容を見て手動でフォーム送信 |
-| `ブロック / 未対応` | CAPTCHA 等でブロック | メール等他の手段で連絡を検討 |
+| ステータス | 意味 | あなたのアクション |
+|-----------|------|-------------------|
+| `送信待ち / 未対応` | 処理待ち | 何もせず待つ |
+| `送信済み / 未対応` | 送信成功 | 企業からの返信を待つ |
+| `手動確認 / 未対応` | 自動送信失敗 | エラーを見て手動対応 |
+| `ブロック / 未対応` | CAPTCHA 等でブロック | メール等他手段で連絡 |
 
 ## 次のステップ
 
-- [セットアップ完全ガイド](/docs/outbound-form-agent/setup) — 前提条件・手順・トラブル対応
-- [CLI リファレンス](/docs/outbound-form-agent/api) — 全コマンド・Git 運用・cron 設定
 - [アーキテクチャ](/docs/outbound-form-agent/architecture) — 内部設計とデータフロー
-- [Twenty CRM 連携](/docs/twenty-crm) — CRM の API 操作と日次チェック
+- [セットアップ](/docs/outbound-form-agent/setup) — 前提条件・手順・トラブル対応
+- [API リファレンス](/docs/outbound-form-agent/api) — 全 CLI オプション
+- [Twenty CRM 連携](/docs/twenty-crm) — CRM の API 操作
