@@ -1,6 +1,34 @@
 ---
 title: アーキテクチャ
-description: Outbound Form Agent のシステムアーキテクチャ
+description: Outbound Form Agent の内部設計 — データの流れを理解する
+---
+
+## 全体像
+
+Outbound Form Agent は「**取得 → 分配 → 処理 → 書き戻し**」の 4 段階で動きます。
+
+```
+┌─────────────────────────────────────────────────┐
+│                  Twenty CRM                      │
+│  「送信待ち / 未対応」の企業を全件取得            │
+└─────────────────┬───────────────────────────────┘
+                  │ REST API（/rest/companies）
+                  ▼
+┌─────────────────────────────────────────────────┐
+│              Orchestrator（親プロセス）            │
+│  ・最大 8 並列のジョブキュー管理                   │
+│  ・タイムアウト（120 秒/社）                       │
+│  ・リトライ（最大 3 回）                           │
+│  ・メモリ管理（10 万件→2 万件ずつ分割）             │
+└──────┬──────────┬──────────┬────────────────────┘
+       │          │          │
+       ▼          ▼          ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Job 1    │ │ Job 2    │ │ Job 3..8 │   ← 子プロセス（並列）
+│ 会社 A    │ │ 会社 B    │ │ ...       │
+└──────────┘ └──────────┘ └──────────┘
+```
+
 ---
 
 ## ファイル構成
@@ -8,48 +36,134 @@ description: Outbound Form Agent のシステムアーキテクチャ
 ```
 src/
 ├── index.ts             # CLI エントリーポイント
-├── orchestrator.ts      # パイプライン統合（並列処理制御）
-├── twenty-client.ts     # Twenty REST API クライアント
-├── form-agent.ts        # フォーム送信メインパイプライン (484行)
-├── form-selector.ts     # フォームフィールド検出・解析 (459行)
-├── form-submitter.ts    # フィールド入力・送信
-├── deepseek.ts          # DeepSeek API クライアント（リトライ3回）
-├── message-templates.ts # 業種別・国別メッセージテンプレート
-├── dummy-data.ts        # ダミーフォームデータ生成
-├── captcha.ts           # CAPTCHA 検出（7種類）
-├── generate-demo.ts     # Astro デモサイトテンプレート生成
-├── lead-collector.ts    # リード収集 (484行)
-├── lead-importer.ts     # リードインポート
-├── company-qualifier.ts # 企業審査
-├── config.ts            # 環境変数・設定
-├── logger.ts            # 構造化ログ
-├── utils.ts             # ユーティリティ
-└── types.ts             # 型定義
+├── orchestrator.ts      # 並列ジョブ制御（ワーカープール）
+├── agent/
+│   ├── form-agent.ts    # 1 社あたりの処理（Playwright + DeepSeek）
+│   ├── form-detector.ts # フォーム発見（構造化 / iframe / ヒューリスティック）
+│   ├── captcha.ts       # CAPTCHA 検出（7 種類）
+│   └── submitter.ts     # フォーム送信 + 結果判定
+├── crm/
+│   └── twenty.ts        # Twenty CRM REST API クライアント
+├── utils/
+│   ├── logger.ts        # 構造化ログ
+│   └── retry.ts         # 指数バックオフリトライ
+└── types.ts             # 共通型定義
 ```
 
-## フォーム検出：3層アプローチ
+---
+
+## 子プロセスの処理詳細（1 社あたり）
+
+### 1. 企業情報の取得
+
+Twenty CRM から処理対象企業を取得します。
+
+```http
+GET /rest/companies?limit=10000
+```
+
+> **注意**: Twenty の REST API は日本語フィルタで 400 を返すため、全件取得後にクライアント側でフィルタリング。
+
+### 2. Web サイトへのアクセス
+
+Playwright（Chrome 自動操作）で stealth モード起動。通常ブラウザと同じヘッダーで bot 検出を回避。
+
+```typescript
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ locale: 'ja-JP' });
+await page.goto(company.websiteUrl, { timeout: 30000 });
+```
+
+### 3. フォーム発見 — 3 層アプローチ
 
 | 層 | 手法 | 説明 |
-|---|------|------|
-| 1 | **構造化** | `form` 要素内の `input/select/textarea` を直接探索 |
-| 2 | **iframe** | クロスオリジン iframe 内のフォーム要素を探索 |
-| 3 | **ヒューリスティック** | 構造化検出が0件でも `input` 要素が存在すれば全要素を抽出 |
+|----|------|------|
+| **1** | 構造化検出 | `<form>` タグ内の `<input>` / `<select>` / `<textarea>` を直接探索 |
+| **2** | iframe 検出 | クロスオリジン `<iframe>` 内のフォーム要素を再帰探索 |
+| **3** | ヒューリスティック | 構造化検出が 0 件でも全 `<input>` 要素を収集、キーワードでリンク探索 |
 
-## CAPTCHA 検出カバレッジ
+### 4. CAPTCHA 検出 — 7 種類カバレッジ
 
 | 種類 | 検出 | 対処 |
 |------|------|------|
-| reCAPTCHA v2 | ✅ | スキップ → 手動確認 |
-| reCAPTCHA v3 | ✅ | 検出のみ（不可視） |
-| hCaptcha | ✅ | スキップ → 手動確認 |
-| Cloudflare Turnstile | ✅ | スキップ → 手動確認 |
-| Cloudflare 5秒盾 | ✅ | 検出 → 待機リトライ |
-| テキスト CAPTCHA | ✅ | 検出 → スキップ |
+| reCAPTCHA v2 | `.g-recaptcha` 要素 | ❌ スキップ → 手動確認 |
+| reCAPTCHA v3 | 不可視（`grecaptcha.ready` 検出） | ⚠️ 検出のみ |
+| hCaptcha | `.h-captcha` 要素 | ❌ スキップ → 手動確認 |
+| Cloudflare Turnstile | `challenges.cloudflare.com` の iframe | ❌ スキップ → 手動確認 |
+| Cloudflare 5 秒盾 | `Checking your browser` テキスト | ⚠️ 検出 → 待機リトライ |
+| テキスト CAPTCHA | 「次の文字を入力」パターン | ✅ DeepSeek が解答 |
+| 数学 CAPTCHA | 「1+2=?」パターン | ⚠️ 簡易計算で突破試行 |
 
-## Twenty CRM ステータス
+### 5. DeepSeek 解析
+
+フォームの HTML 構造を DeepSeek API に送信し、企業情報に基づいた適切な問い合わせ文を生成。
+
+### 6. フォーム送信
+
+生成テキストを各フィールドに入力し、送信ボタンをクリック。
+
+### 7. Twenty CRM への書き戻し
+
+| 結果 | CRM ステータス | エラーフィールド |
+|------|---------------|-----------------|
+| 送信成功 | `送信済み / 未対応` | null |
+| フォームなし | `手動確認 / 未対応` | `"フォームなし"` |
+| CAPTCHA | `ブロック / 未対応` | CAPTCHA 種別 |
+| タイムアウト | `手動確認 / 未対応` | `"タイムアウト (120s)"` |
+| 送信エラー | `手動確認 / 未対応` | エラー詳細 |
+
+---
+
+## 並列処理の仕組み
+
+Orchestrator は**ワーカープール**方式で最大 8 並列を維持。
+
+```
+最大 8 並列
+│
+├─ Job 1: Dnb, Inc.          ████████░░░░  (処理中)
+├─ Job 2: Example Corp        ████████████  (完了)
+├─ Job 3: Acme Ltd            ░░░░░░░░░░░░  (待機中)
+├─ Job 4: Global Tech         ██████░░░░░░  (処理中)
+│  ...
+└─ Job 8: 空きスロット
+```
+
+- **上限 8 並列**: DeepSeek API のレート制限とメモリバランス
+- **完了次第補充**: 空いたスロットに即座に次のジョブを投入
+- **全完了で終了**: 全ジョブ完了で Orchestrator がサマリーを出力
+
+---
+
+## エラーハンドリングとリトライ
+
+各ジョブは最大 3 回の指数バックオフリトライ（1 分 → 2 分 → 4 分）。
+
+```
+1 回目: 通常実行
+   ├─ 成功 → ステータス更新
+   └─ 失敗 → 1 分待機
+2 回目: リトライ
+   ├─ 成功 → ステータス更新
+   └─ 失敗 → 2 分待機
+3 回目: 最終リトライ
+   ├─ 成功 → ステータス更新
+   └─ 失敗 →「手動確認」+ エラー記録
+```
+
+---
+
+## メモリ管理
+
+10 万件以上の企業データを扱う場合、20,000 件ずつに分割しメモリ枯渇を防止。
+
+---
+
+## Twenty CRM ステータス値の意味
 
 | ステータス | 意味 |
 |-----------|------|
 | `送信待ち / 未対応` | フォーム送信待機中 |
-| `送信済み / 未対応` | フォーム送信成功 |
+| `送信済み / 未対応` | フォーム送信成功、返信待ち |
 | `手動確認 / 未対応` | 自動送信失敗 → 人手確認待ち |
+| `ブロック / 未対応` | CAPTCHA などによりブロック |

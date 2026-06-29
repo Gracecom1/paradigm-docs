@@ -7,12 +7,12 @@
       "pages": ["index", "architecture", "setup", "api"]
     },
     "twenty-crm": {
-      "type": "page",
-      "title": "Twenty CRM"
+      "title": "Twenty CRM",
+      "pages": ["twenty-crm"]
     },
     "cli-tools": {
-      "type": "page",
-      "title": "CLI Tools"
+      "title": "CLI ツール群",
+      "pages": ["cli-tools"]
     }
   }
 }
